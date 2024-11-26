@@ -25,3 +25,8 @@ Notes on data preprocessing:
 - lets use a heavy high cut at 0.5 Hz with order maybe 2. one pass only, not zero phase.
 - Filter needs linear group delay over frequencies
 - data needs to be normalized for a fixed range (e.g. -200 equals -1 and +200 mV equals +1)
+
+
+
+Notes on env:
+Currently has pytorch
