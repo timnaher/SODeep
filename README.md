@@ -28,5 +28,9 @@ Notes on data preprocessing:
 
 
 
+Mohsen comments:
+- use integral as feature to FC layer
+- together with smooed derivative
+
 Notes on env:
 Currently has pytorch
