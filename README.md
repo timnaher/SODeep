@@ -31,6 +31,7 @@ Notes on data preprocessing:
 Mohsen comments:
 - use integral as feature to FC layer
 - together with smooed derivative
+- use previous(rolling) window for normalization
 
 Notes on env:
 Currently has pytorch
