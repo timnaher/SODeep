@@ -1,0 +1,10 @@
+data:
+  full_hdf5_file: "/Users/timnaher/Documents/PhD/Projects/SODeep/data/processed/SO_data_fd.h5"
+  train_hdf5_file: "/Users/timnaher/Documents/PhD/Projects/SODeep/data/processed/SO_data_train.h5"
+  val_hdf5_file: "/Users/timnaher/Documents/PhD/Projects/SODeep/data/processed/SO_data_val.h5"
+  test_hdf5_file: "/Users/timnaher/Documents/PhD/Projects/SODeep/data/processed/SO_data_test.h5"
+
+split:
+  train_ratio: 0.7
+  val_ratio: 0.15
+  test_ratio: 0.15
