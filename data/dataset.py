@@ -14,7 +14,6 @@ class SOTimeSeriesDataset(Dataset):
         with h5py.File(self.hdf5_file, 'r') as hdf:
             data = hdf['data'][idx]
             label = hdf['labels'][idx]
-            exp_id = hdf['experiment_ids'][idx].decode('utf8')
         data = torch.tensor(data, dtype=torch.float32)
         label = torch.tensor(label, dtype=torch.long)
-        return {'data': data, 'label': label, 'experiment_id': exp_id}
+        return {'data': data, 'label': label}
