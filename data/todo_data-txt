@@ -1,0 +1,3 @@
+1) After collecting ALL the data in a large hdf5 file, we might host it somewhere
+2) We split this file in train, test and val, making smaller h5 files
+3) we can save things about the files in our configs
