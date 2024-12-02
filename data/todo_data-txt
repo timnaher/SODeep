@@ -1,3 +1,6 @@
-1) After collecting ALL the data in a large hdf5 file, we might host it somewhere
-2) We split this file in train, test and val, making smaller h5 files
-3) we can save things about the files in our configs
+Notes on data:
+
+To create the datasets that we need, we must follow this order:
+1) build the full hdf5 dataset with `create_full_hdf5_dataset.py`. This also entails trimming the data and balancing classes.
+2) Next we create a train-test-dev split with `create_train_val_test_split.py`
+3) 

@@ -1,3 +1,4 @@
+#%%
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -22,3 +23,4 @@ class TemporalAttention(nn.Module):
         attention_weights = F.softmax(attention_weights, dim=1)  # Normalize over time
         context = torch.bmm(attention_weights.unsqueeze(1), features).squeeze(1)  # Weighted sum
         return context, attention_weights
+

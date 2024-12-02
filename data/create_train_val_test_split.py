@@ -67,7 +67,12 @@ save_split_hdf5(
 
 # %%
 # Verify the separate HDF5 files
-for file_path in [train_hdf5_file, val_hdf5_file, test_hdf5_file]:
+
+for file_path in [
+    cfg.data.train_hdf5_file,
+    cfg.data.val_hdf5_file,
+    cfg.data.test_hdf5_file
+    ]:
     with h5py.File(file_path, 'r') as hdf:
         print(f"Keys in {file_path}: {list(hdf.keys())}")
         for key in hdf.keys():
