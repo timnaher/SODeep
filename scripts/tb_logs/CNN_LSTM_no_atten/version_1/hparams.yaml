@@ -1,0 +1,23 @@
+model:
+  input_length: 150
+  num_classes: 3
+  n_filters1: 16
+  n_filters2: 32
+  dropout1: 0.3
+  dropout2: 0.3
+  lstm_units: 64
+  lstm_layers: 2
+  lstm_dropout: 0.1
+  learning_rate: 0.01
+training:
+  max_epochs: 40
+  log_every_n_steps: 1
+dataloader:
+  batch_size: 64
+data:
+  train_hdf5_file: /Users/timnaher/Documents/PhD/Projects/SODeep/data/leave_one_par_out/train.h5
+  val_hdf5_file: /Users/timnaher/Documents/PhD/Projects/SODeep/data/leave_one_par_out/val.h5
+  test_hdf5_file: /Users/timnaher/Documents/PhD/Projects/SODeep/data/leave_one_par_out/test.h5
+transforms:
+  z_score_mu: 0
+  z_score_sigma: 2

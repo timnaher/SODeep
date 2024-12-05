@@ -77,4 +77,7 @@ for file_path in [
         print(f"Keys in {file_path}: {list(hdf.keys())}")
         for key in hdf.keys():
             print(f"{key} shape: {hdf[key].shape}")
+
+
+    
 # %%

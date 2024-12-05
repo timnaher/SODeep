@@ -1,4 +1,4 @@
-# %%
+#%%
 import h5py
 import numpy as np
 import os
@@ -7,7 +7,7 @@ import os
 hdf5_file = 'processed/SO_data_fd.h5'
 
 # Define label elements to create corresponding datasets
-label_elements = [-1]
+label_elements = [-5]
 
 # Initialize the HDF5 file and datasets
 with h5py.File(hdf5_file, 'w') as hdf:
@@ -35,53 +35,86 @@ with h5py.File(hdf5_file, 'w') as hdf:
 # get all .mat files in /Volumes/T7/SchemAcS/labeled_windows/
 # and store them in the list hdf5_files
 hdf5_files = [os.path.join('/Volumes/T7/SchemAcS/labeled_windows/', f) for f in os.listdir('/Volumes/T7/SchemAcS/labeled_windows/') if f.endswith('.mat')]
-print(hdf5_files)
-# Open the large HDF5 file for appending data
-with h5py.File(hdf5_file, 'a') as hdf:
-    total_samples = 0  # Track the total number of samples across files
 
-    for small_hdf5_file in hdf5_files:
-        print(f"Processing {small_hdf5_file}")
-        # Load data from the smaller HDF5 file
-        with h5py.File(small_hdf5_file, 'r') as small_file:
-            eeg_data = small_file['eeg'][:]
-            labels = small_file['y'][:]
+train_files = hdf5_files[:int(len(hdf5_files)*0.8)]
+val_files = hdf5_files[int(len(hdf5_files)*0.8):int(len(hdf5_files)*0.9)]
+test_files = hdf5_files[int(len(hdf5_files)*0.9):]
 
-            # Assuming labels have as many columns as there are label elements
-            for i, label_element in enumerate(label_elements):
-                # Extract labels for the specific label element
-                label_data = labels[:, i]
-                num_new_samples = eeg_data.shape[0]
-
-                # Resize datasets to accommodate new data
-                hdf['data'].resize((total_samples + num_new_samples, eeg_data.shape[1]))
-                hdf[f'labels{label_element}'].resize((total_samples + num_new_samples,))
-
-                # Append new data and labels
-                hdf['data'][total_samples:total_samples + num_new_samples] = eeg_data
-                hdf[f'labels{label_element}'][total_samples:total_samples + num_new_samples] = label_data
-
-            # Update total samples after processing one file
-            total_samples += num_new_samples
-
-# %%
-# Load the HDF5 dataset to verify contents
-with h5py.File(hdf5_file, 'r') as hdf:
-    
-    data = hdf['data'][:]
-    labels_minus_5 = hdf['labels-5'][:]
-    print("Keys in HDF5 file:", list(hdf.keys()))
-    print(f"Shape of 'data': {data.shape}")
-    print(f"Shape of 'labels-5': {labels_minus_5.shape}")
-
-# %%
+#%%
 import h5py
+import os
 import numpy as np
 
+# Paths for the output HDF5 files
+output_dir = "leave_one_par_out"
+os.makedirs(output_dir, exist_ok=True)
+train_file = os.path.join(output_dir, "train.h5")
+val_file = os.path.join(output_dir, "val.h5")
+test_file = os.path.join(output_dir, "test.h5")
+
+# Initialize function to split and write data into separate HDF5 files
+def create_hdf5_split(data_files, output_file, label_elements):
+    with h5py.File(output_file, 'w') as hdf:
+        # Create datasets with initial zero size
+        data_ds = hdf.create_dataset(
+            'data',
+            shape=(0, 150),
+            maxshape=(None, 150),
+            dtype=np.float32,
+            chunks=True,
+            compression='gzip'
+        )
+        for label_element in label_elements:
+            hdf.create_dataset(
+                f'labels{label_element}',
+                shape=(0,),
+                maxshape=(None,),
+                dtype=np.int64,
+                chunks=True,
+                compression='gzip'
+            )
+        total_samples = 0
+        for data_file in data_files:
+            with h5py.File(data_file, 'r') as src_file:
+                eeg_data = src_file['eeg'][:]
+                labels = src_file['y'][:]
+                num_new_samples = eeg_data.shape[0]
+
+                # Resize datasets
+                data_ds.resize((total_samples + num_new_samples, eeg_data.shape[1]))
+                for i, label_element in enumerate(label_elements):
+                    hdf[f'labels{label_element}'].resize((total_samples + num_new_samples,))
+
+                # Append data and labels
+                data_ds[total_samples:total_samples + num_new_samples] = eeg_data
+                for i, label_element in enumerate(label_elements):
+                    hdf[f'labels{label_element}'][total_samples:total_samples + num_new_samples] = labels[:, i]
+
+                total_samples += num_new_samples
+
+# Write train, validation, and test datasets
+create_hdf5_split(train_files, train_file, label_elements)
+create_hdf5_split(val_files, val_file, label_elements)
+create_hdf5_split(test_files, test_file, label_elements)
+
+# open one of the files to check the data
+with h5py.File(train_file, 'r') as hdf:
+    print(hdf.keys())
+    print(hdf['data'].shape)
+    print(hdf['labels-5'].shape)
+
+# %%
+
+# Paths to the datasets
+train_file = 'leave_one_par_out/train.h5'
+val_file = 'leave_one_par_out/val.h5'
+test_file = 'leave_one_par_out/test.h5'
+
+# Function to balance labels
 def balance_labels(hdf5_file):
     """
     Balances the labels in the HDF5 dataset by ensuring the same number of rows for each label.
-    Assumes a single label dataset called 'label-5'.
+    Assumes a single label dataset called 'labels-5'.
     """
     with h5py.File(hdf5_file, 'a') as hdf:
         # Validate label dataset
@@ -104,9 +137,6 @@ def balance_labels(hdf5_file):
         indices_to_keep = []
         for label in unique_labels:
             label_indices = np.where(labels == label)[0]
-            assert len(label_indices) >= min_count, (
-                f"Not enough samples for label {label}. Found {len(label_indices)}, needed {min_count}."
-            )
             sampled_indices = np.random.choice(label_indices, size=min_count, replace=False)
             indices_to_keep.extend(sampled_indices)
 
@@ -126,13 +156,9 @@ def balance_labels(hdf5_file):
         new_unique_labels, new_counts = np.unique(new_labels, return_counts=True)
         print(f"Label distribution after balancing: {dict(zip(new_unique_labels, new_counts))}")
 
-# File path to the HDF5 dataset
-hdf5_file = 'processed/SO_data_fd.h5'
-
-# Label elements to balance
-label_elements = [-5]
-
-# Balance the labels in the HDF5 dataset
-balance_labels(hdf5_file)
-
+# Balance each dataset
+balance_labels(train_file)
+balance_labels(val_file)
+balance_labels(test_file)
+# s
 # %%

@@ -1,6 +1,6 @@
 dataset:
   name: MyDataset
-  hdf5_path: data/train.h5
+  hdf5_path: processed/SO_dat
   transform:
     - Normalize:
         mean: [0.5, 0.5, 0.5] # edit this
