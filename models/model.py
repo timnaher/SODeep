@@ -1,5 +1,6 @@
-import torch
+#%%
 import torch.nn as nn
+import torch
 import pytorch_lightning as pl
 from torch.optim.lr_scheduler import StepLR
 from omegaconf import OmegaConf
@@ -47,25 +48,33 @@ class CNN_LSTM(pl.LightningModule):
         x = self.fc(h_n[-1])  # Use the last hidden state for classification
         return x
 
-    def training_step(self, batch, batch_idx):
+    def _common_step(self, batch, stage: str):
         data, labels = batch
         outputs = self(data)
         loss = self.criterion(outputs, labels)
         acc = (outputs.argmax(dim=-1) == labels).float().mean()
 
-        self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True)
-        self.log("train_acc", acc, on_step=True, on_epoch=True, prog_bar=True)
+        # Log metrics based on stage
+        if stage == "train":
+            self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True)
+            self.log("train_acc", acc, on_step=True, on_epoch=True, prog_bar=True)
+        elif stage == "val":
+            self.log("val_loss", loss, on_step=True, on_epoch=True, prog_bar=True)
+            self.log("val_acc", acc, on_step=True, on_epoch=True, prog_bar=True)
+        elif stage == "test":
+            self.log("test_loss", loss, on_step=True, on_epoch=True, prog_bar=True)
+            self.log("test_acc", acc, on_step=True, on_epoch=True, prog_bar=True)
+
         return loss
+
+    def training_step(self, batch, batch_idx):
+        return self._common_step(batch, stage="train")
 
     def validation_step(self, batch, batch_idx):
-        data, labels = batch
-        outputs = self(data)
-        loss = self.criterion(outputs, labels)
-        acc = (outputs.argmax(dim=-1) == labels).float().mean()
+        return self._common_step(batch, stage="val")
 
-        self.log("val_loss", loss, on_step=True, on_epoch=True, prog_bar=True)
-        self.log("val_acc", acc, on_step=True, on_epoch=True, prog_bar=True)
-        return loss
+    def test_step(self, batch, batch_idx):
+        return self._common_step(batch, stage="test")
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.cfg.learning_rate, weight_decay=0)
@@ -73,7 +82,7 @@ class CNN_LSTM(pl.LightningModule):
         return [optimizer], [scheduler]
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # Define configuration using OmegaConf
     cfg = OmegaConf.create({
         "input_length": 150,
@@ -93,3 +102,5 @@ if __name__ == '__main__':
     x = torch.randn(32, 1, cfg.input_length)  # Batch of 32 samples
     output = model(x)
     print(output.shape)  # Expected output shape: (32, num_classes)
+
+#%%

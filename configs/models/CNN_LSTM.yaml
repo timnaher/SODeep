@@ -1,12 +1,12 @@
 model:
   input_length: 150        # Length of the input time series
   num_classes: 3           # Number of output classes
-  n_filters1: 16           # Number of filters in the first Conv1D layer
+  n_filters1: 8           # Number of filters in the first Conv1D layer
   n_filters2: 32           # Number of filters in the second Conv1D layer
   dropout1: 0.3            # Dropout rate for the first Conv1D layer
   dropout2: 0.3            # Dropout rate for the second Conv1D layer
   lstm_units: 64           # Number of hidden units in the LSTM layer
-  lstm_layers: 2           # Number of LSTM layers
+  lstm_layers: 3           # Number of LSTM layers
   lstm_dropout: 0.1        # Dropout rate for the LSTM layer
 
   # Learning related
@@ -14,7 +14,7 @@ model:
 
 
 training:
-  max_epochs: 40           # Number of training epochs
+  max_epochs: 20           # Number of training epochs
   log_every_n_steps: 1     # Log frequency during training
 
 dataloader:
@@ -27,4 +27,4 @@ data:
 
 transforms:
   z_score_mu: 0
-  z_score_sigma: 2
+  z_score_sigma: 3
