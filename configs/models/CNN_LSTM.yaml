@@ -1,7 +1,7 @@
 model:
   input_length: 150        # Length of the input time series
   num_classes: 3           # Number of output classes
-  n_filters1: 8           # Number of filters in the first Conv1D layer
+  n_filters1: 8            # Number of filters in the first Conv1D layer
   n_filters2: 32           # Number of filters in the second Conv1D layer
   dropout1: 0.3            # Dropout rate for the first Conv1D layer
   dropout2: 0.3            # Dropout rate for the second Conv1D layer

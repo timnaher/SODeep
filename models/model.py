@@ -44,6 +44,7 @@ class CNN_LSTM(pl.LightningModule):
         x = x.permute(0, 2, 1)  # (batch, time, channels)
         x, (h_n, _) = self.lstm(x)
 
+
         # Fully connected layer
         x = self.fc(h_n[-1])  # Use the last hidden state for classification
         return x

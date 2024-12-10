@@ -1,7 +1,8 @@
 #%%
 import sys
 sys.path.append('../')
-
+import numpy as np
+from scipy.signal import savgol_filter
 from torch.utils.data import Dataset
 import h5py
 from omegaconf import OmegaConf
@@ -13,11 +14,9 @@ config_path = "/Users/timnaher/Documents/PhD/Projects/SODeep/configs/data/data_c
 cfg = OmegaConf.load(config_path)
 
 
-import torch
-import h5py
-import numpy as np
-from torch.utils.data import Dataset
-from scipy.signal import savgol_filter
+##########################
+##### Custom Dataset #####
+##########################
 
 class SOTimeSeriesDataset(Dataset):
     def __init__(self, hdf5_file, label_time, transform=None, derivative=False, window_length=10, polyorder=2):
@@ -75,6 +74,41 @@ class SOTimeSeriesDataset(Dataset):
             # Add a dimension for the channel
             data = data.unsqueeze(0)
             return data, label
+
+
+##########################
+####### Datamodule #######
+##########################
+
+def make_data_module(cfg):
+    """
+    Create a PyTorch Lightning DataModule for the SO time series dataset.
+
+    Args:
+        cfg (OmegaConf): Configuration object.
+
+    Returns:
+        SOTimeSeriesDataModule: DataModule object.
+    """
+    #TODO: FIX THIS
+    def _full_paths(root: str, dataset: ListConfig) -> list[Path]:
+        return [
+            Path(root).expanduser().joinpath(f"{session}.hdf5") for session in dataset
+        ]
+
+    
+    return SOTimeSeriesDataModule(
+        train_hdf5_file=cfg.data.train_hdf5_file,
+        val_hdf5_file=cfg.data.val_hdf5_file,
+        test_hdf5_file=cfg.data.test_hdf5_file,
+        label_time=cfg.data.label_time,
+        transform=cfg.transforms.transform,
+        batch_size=cfg.data.batch_size,
+        num_workers=cfg.data.num_workers,
+        derivative=cfg.data.derivative,
+        window_length=cfg.data.window_length,
+        polyorder=cfg.data.polyorder
+    )
 
 #%% Test the dataset
 if __name__ == '__main__':
