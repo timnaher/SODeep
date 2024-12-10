@@ -1,17 +1,14 @@
 #%%
-import sys
-sys.path.append('../')
+from pathlib import Path
+from typing import Sequence, Optional
+
 import numpy as np
+import torch
+from torch.utils.data import Dataset, DataLoader, ConcatDataset
+import pytorch_lightning as pl
 from scipy.signal import savgol_filter
-from torch.utils.data import Dataset
 import h5py
 from omegaconf import OmegaConf
-import torch
-import matplotlib.pyplot as plt
-
-# Load configuration from YAML
-config_path = "/Users/timnaher/Documents/PhD/Projects/SODeep/configs/data/data_config.yaml"
-cfg = OmegaConf.load(config_path)
 
 
 ##########################
@@ -80,35 +77,103 @@ class SOTimeSeriesDataset(Dataset):
 ####### Datamodule #######
 ##########################
 
-def make_data_module(cfg):
-    """
-    Create a PyTorch Lightning DataModule for the SO time series dataset.
 
-    Args:
-        cfg (OmegaConf): Configuration object.
+class WindowedEEGDataModule(pl.LightningDataModule):
+    def __init__(
+        self,
+        window_length: int,
+        padding: tuple[int, int],
+        batch_size: int,
+        num_workers: int,
+        train_sessions: Sequence[Path],
+        val_sessions: Sequence[Path],
+        test_sessions: Sequence[Path],
+        val_test_window_length: Optional[int] = None,
+        transforms: dict = None,
+    ) -> None:
 
-    Returns:
-        SOTimeSeriesDataModule: DataModule object.
-    """
-    #TODO: FIX THIS
-    def _full_paths(root: str, dataset: ListConfig) -> list[Path]:
-        return [
-            Path(root).expanduser().joinpath(f"{session}.hdf5") for session in dataset
-        ]
+        super().__init__()
+        
+        self.window_length = window_length
+        self.val_test_window_length = val_test_window_length or window_length
+        self.padding = padding
 
-    
-    return SOTimeSeriesDataModule(
-        train_hdf5_file=cfg.data.train_hdf5_file,
-        val_hdf5_file=cfg.data.val_hdf5_file,
-        test_hdf5_file=cfg.data.test_hdf5_file,
-        label_time=cfg.data.label_time,
-        transform=cfg.transforms.transform,
-        batch_size=cfg.data.batch_size,
-        num_workers=cfg.data.num_workers,
-        derivative=cfg.data.derivative,
-        window_length=cfg.data.window_length,
-        polyorder=cfg.data.polyorder
-    )
+        self.batch_size = batch_size
+        self.num_workers = num_workers
+
+        self.train_sessions = train_sessions
+        self.val_sessions = val_sessions
+        self.test_sessions = test_sessions
+
+        # Transforms can be provided as a dictionary for train, val, test
+        self.train_transforms = transforms.get("train") if transforms else None
+        self.val_transforms = transforms.get("val") if transforms else None
+        self.test_transforms = transforms.get("test") if transforms else None
+
+    def setup(self, stage: Optional[str] = None) -> None:
+        self.train_dataset = ConcatDataset(
+            [
+                SOTimeSeriesDataset(
+                    hdf5_path,
+                    transform=self.train_transforms,
+                    window_length=self.window_length,
+                    padding=self.padding,
+                    jitter=True,
+                )
+                for hdf5_path in self.train_sessions
+            ]
+        )
+        self.val_dataset = ConcatDataset(
+            [
+                SOTimeSeriesDataset(
+                    hdf5_path,
+                    transform=self.val_transforms,
+                    window_length=self.val_test_window_length,
+                    padding=self.padding,
+                    jitter=False,
+                )
+                for hdf5_path in self.val_sessions
+            ]
+        )
+        self.test_dataset = ConcatDataset(
+            [
+                SOTimeSeriesDataset(
+                    hdf5_path,
+                    transform=self.test_transforms,
+                    window_length=self.val_test_window_length,
+                    padding=(0, 0),
+                    jitter=False,
+                )
+                for hdf5_path in self.test_sessions
+            ]
+        )
+
+    def train_dataloader(self) -> DataLoader:
+        return DataLoader(
+            self.train_dataset,
+            batch_size=self.batch_size,
+            num_workers=self.num_workers,
+            pin_memory=True,
+            shuffle=True,
+        )
+
+    def val_dataloader(self) -> DataLoader:
+        return DataLoader(
+            self.val_dataset,
+            batch_size=self.batch_size,
+            num_workers=self.num_workers,
+            pin_memory=True,
+            shuffle=False,
+        )
+
+    def test_dataloader(self) -> DataLoader:
+        return DataLoader(
+            self.test_dataset,
+            batch_size=self.batch_size,
+            num_workers=self.num_workers,
+            pin_memory=True,
+            shuffle=False,
+        )
 
 #%% Test the dataset
 if __name__ == '__main__':

@@ -35,3 +35,17 @@ Mohsen comments:
 
 Notes on env:
 Currently has pytorch
+
+
+
+Important:
+
+Data:
+- currently the data are in /data/online_model
+- here are folders: train, val, test
+- in each of these folders, there is the corresponding hdf5 dataset
+  from one night from one participants. These are referred to as "sessions". Sessions are randomly split at one time.
+
+
+build requiements.txt
+pipreqs /Users/timnaher/Documents/PhD/Projects/SODeep --force   
