@@ -12,6 +12,12 @@ __pycache__/
 *.npy
 *.csv
 
+# pytorch specifics
+*.ckpt
+events*
+hparams*
+
+
 # C extensions
 *.so
 

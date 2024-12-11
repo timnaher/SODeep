@@ -83,25 +83,100 @@ class CNN_LSTM(pl.LightningModule):
         return [optimizer], [scheduler]
 
 
-if __name__ == "__main__":
-    # Define configuration using OmegaConf
-    cfg = OmegaConf.create({
-        "input_length": 150,
-        "num_classes": 3,
-        "n_filters1": 16,
-        "n_filters2": 32,
-        "dropout1": 0.3,
-        "dropout2": 0.3,
-        "lstm_units": 64,
-        "lstm_layers": 2,
-        "lstm_dropout": 0.1,
-        "learning_rate": 0.01,
-    })
+#%%
 
-    # Instantiate and test the model
-    model = CNN_LSTM(cfg)
-    x = torch.randn(32, 1, cfg.input_length)  # Batch of 32 samples
-    output = model(x)
-    print(output.shape)  # Expected output shape: (32, num_classes)
+cfg = OmegaConf.create({
+    "input_length": 150,
+    "num_classes": 3,
+    "n_filters1": 16,
+    "n_filters2": 32,
+    "dropout1": 0.3,
+    "dropout2": 0.3,
+    "lstm_units": 64,
+    "lstm_layers": 2,
+    "lstm_dropout": 0.1,
+    "learning_rate": 0.01,
+})
+
+
+
+datamodule = WindowedEEGDataModule(
+    window_length=cfg.input_length,
+    batch_size=32,
+    num_workers=0,
+    train_dir="data/processed/train",
+    val_dir="data/processed/val",
+    test_dir="data/processed/test",
+)
+
+# Instantiate and test the model
+model = CNN_LSTM(cfg)
+x = torch.randn(32, 1, cfg.input_length)  # Batch of 32 samples
+output = model(x)
+print(output.shape)  # Expected output shape: (32, num_classes)
+
+
 
 #%%
+from dataset import WindowedEEGDataModule
+import torch.nn as nn
+import torch
+import pytorch_lightning as pl
+from torch.optim.lr_scheduler import StepLR
+from omegaconf import OmegaConf
+from pytorch_lightning.loggers import TensorBoardLogger
+from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
+from dataset import WindowedEEGDataModule
+# Configuration
+cfg = OmegaConf.create({
+    "input_length": 150,
+    "num_classes": 3,
+    "n_filters1": 16,
+    "n_filters2": 32,
+    "dropout1": 0.3,
+    "dropout2": 0.3,
+    "lstm_units": 64,
+    "lstm_layers": 2,
+    "lstm_dropout": 0.1,
+    "learning_rate": 0.01,
+})
+
+
+# DataModule
+datamodule = WindowedEEGDataModule(
+    window_length=cfg.input_length,
+    batch_size=32,
+    num_workers=0,
+    train_dir="data/processed/train",
+    val_dir="data/processed/val",
+    test_dir="data/processed/test",
+)
+
+# Model
+model = CNN_LSTM(cfg)
+
+# Logger and Callbacks
+logger = TensorBoardLogger("tb_logs", name="cnn_lstm")
+checkpoint_callback = ModelCheckpoint(
+    monitor="val_loss",
+    dirpath="checkpoints/",
+    filename="cnn-lstm-{epoch:02d}-{val_loss:.2f}",
+    save_top_k=1,
+    mode="min",
+)
+early_stopping_callback = EarlyStopping(monitor="val_loss", patience=10, mode="min")
+
+# Trainer
+trainer = pl.Trainer(
+    max_epochs=50,
+    logger=logger,
+    callbacks=[checkpoint_callback, early_stopping_callback],
+    log_every_n_steps=10,
+)
+
+# Train the model
+trainer.fit(model, datamodule)
+
+# Test the model
+trainer.test(model, datamodule)
+# %%

@@ -9,68 +9,106 @@ import pytorch_lightning as pl
 from scipy.signal import savgol_filter
 import h5py
 from omegaconf import OmegaConf
+import h5py
+import numpy as np
+import torch
+from torch.utils.data import Dataset
+import random
 
 
-##########################
-##### Custom Dataset #####
-##########################
-
-class SOTimeSeriesDataset(Dataset):
-    def __init__(self, hdf5_file, label_time, transform=None, derivative=False, window_length=10, polyorder=2):
+class WindowedEEGDataset(Dataset):
+    def __init__(self, hdf5_file, window_length, transform=None, stride=None, keep_ratio=0.1):
         """
-        Custom dataset for SO time series data with Savitzky-Golay filtering.
+        PyTorch Dataset for windowed access to EEG data stored in HDF5 files.
 
         Args:
-            hdf5_file (str): Path to the HDF5 file containing data.
-            label_time (str): Name of the label dataset in the HDF5 file.
+            hdf5_file (str): Path to the HDF5 file.
+            window_length (int): Length of each window (number of timepoints).
             transform (callable, optional): Transformation to apply to the data.
-            derivative (bool, optional): Whether to calculate the derivative of the data.
-            window_length (int, optional): The length of the window for the Savitzky-Golay filter.
-            polyorder (int, optional): The polynomial order for the Savitzky-Golay filter.
+            stride (int, optional): Stride between consecutive windows.
+                Defaults to `window_length` (non-overlapping windows).
+            keep_ratio (float, optional): Fraction of zero-only windows to keep.
         """
         self.hdf5_file = hdf5_file
-        self.label_time = label_time
-        self.transform = transform
-        self.derivative = derivative
         self.window_length = window_length
-        self.polyorder = polyorder
-        
-        with h5py.File(self.hdf5_file, 'r') as hdf:
-            self.length = hdf['data'].shape[0]
+        self.transform = transform
+        self.stride = stride or window_length
+        self.keep_ratio = keep_ratio
+
+        # Open HDF5 file to determine dataset size
+        with h5py.File(hdf5_file, "r") as hdf:
+            self.num_timepoints = hdf["eeg"].shape[0]
+            self.num_channels = hdf["eeg"].shape[1]
+            self.targets = np.array(hdf["targets"][:])  # Use "targets" for labels
+
+        # Precompute windows with balancing
+        self.windows = self._compute_windows(keep_ratio=self.keep_ratio)
+
+    def _compute_windows(self, keep_ratio=0.1):
+        """
+        Compute start and end indices for all windows and balance zero-only windows.
+        Remove windows containing breaks in the `time` vector.
+
+        Args:
+            keep_ratio (float): Fraction of zero-only windows to keep.
+
+        Returns:
+            List[Tuple[int, int]]: A list of tuples (start, end).
+        """
+        windows = []
+        zero_only_windows = []
+
+        with h5py.File(self.hdf5_file, "r") as hdf:
+            time = np.array(hdf["time"][:])  # Load the `time` vector
+
+            for start in range(0, self.num_timepoints - self.window_length + 1, self.stride):
+                end = start + self.window_length
+
+                # Check if the window contains a break in the `time` vector
+                if not np.all(np.diff(time[start:end]) == 1):  # Detect non-consecutive values
+                    continue  # Skip this window
+
+                # Add valid window
+                windows.append((start, end))
+
+                # Check if the window contains only zeros
+                if (self.targets[start:end] == 0).all():
+                    zero_only_windows.append((start, end))
+
+        # Randomly sample a subset of zero-only windows
+        sampled_zero_windows = random.sample(zero_only_windows, int(len(zero_only_windows) * keep_ratio))
+
+        # Combine sampled zero-only windows with all other windows
+        non_zero_windows = [w for w in windows if w not in zero_only_windows]
+        balanced_windows = non_zero_windows + sampled_zero_windows
+
+        return balanced_windows
 
     def __len__(self):
-        return self.length
+        return len(self.windows)
 
     def __getitem__(self, idx):
-        with h5py.File(self.hdf5_file, 'r') as hdf:
-            data = hdf['data'][idx]
-            label = hdf[f'labels{self.label_time}'][idx]
+        """
+        Fetch the windowed data and corresponding label for a given index.
+        """
+        start, end = self.windows[idx]
 
-        # Apply Savitzky-Golay filter to smooth the data
-        data = savgol_filter(data, window_length=self.window_length, polyorder=self.polyorder,deriv=1, axis=-1)
+        with h5py.File(self.hdf5_file, "r") as hdf:
+            data = hdf["eeg"][start:end, :]
+            label = hdf["targets"][start:end]  # Targets for the window
 
         # Convert to PyTorch tensors
-        data = torch.tensor(data, dtype=torch.float32)
+        data = torch.tensor(data.T, dtype=torch.float32)  # Transpose for [channels, time]
         label = torch.tensor(label, dtype=torch.long)
 
-        # Compute the derivative and append it as a new feature if requested
-        if self.derivative:
-            derivative = torch.diff(data, prepend=data[:1])  # Compute the derivative
-            data_with_derivative = torch.stack([data, derivative], dim=0)
-        else:
-            data_with_derivative = data
-
-        # Apply the transformation if provided
+        # Apply transformation if specified
         if self.transform:
-            data_with_derivative = self.transform(data_with_derivative) if self.derivative else self.transform(data)
+            data = self.transform(data)
 
-        # Return the data and label
-        if self.derivative:
-            return data_with_derivative, label
-        else:
-            # Add a dimension for the channel
-            data = data.unsqueeze(0)
-            return data, label
+        return data, label
+
+
+
 
 
 ##########################
@@ -78,71 +116,85 @@ class SOTimeSeriesDataset(Dataset):
 ##########################
 
 
+import os
+from pathlib import Path
+from typing import Optional, Sequence, Union
+from torch.utils.data import DataLoader, ConcatDataset
+import pytorch_lightning as pl
+from utils.transforms import population_zscore_transform
+
 class WindowedEEGDataModule(pl.LightningDataModule):
     def __init__(
         self,
         window_length: int,
-        padding: tuple[int, int],
+        stride: Optional[int],
+        keep_ratio: float,
         batch_size: int,
         num_workers: int,
-        train_sessions: Sequence[Path],
-        val_sessions: Sequence[Path],
-        test_sessions: Sequence[Path],
+        train_dir: Union[str, Path],
+        val_dir: Union[str, Path],
+        test_dir: Union[str, Path],
         val_test_window_length: Optional[int] = None,
         transforms: dict = None,
     ) -> None:
-
         super().__init__()
-        
-        self.window_length = window_length
-        self.val_test_window_length = val_test_window_length or window_length
-        self.padding = padding
 
+        self.window_length = window_length
+        self.stride = stride or window_length
+        self.keep_ratio = keep_ratio
         self.batch_size = batch_size
         self.num_workers = num_workers
 
-        self.train_sessions = train_sessions
-        self.val_sessions = val_sessions
-        self.test_sessions = test_sessions
+        self.train_dir = Path(train_dir)
+        self.val_dir = Path(val_dir)
+        self.test_dir = Path(test_dir)
 
         # Transforms can be provided as a dictionary for train, val, test
         self.train_transforms = transforms.get("train") if transforms else None
         self.val_transforms = transforms.get("val") if transforms else None
         self.test_transforms = transforms.get("test") if transforms else None
 
+    def _get_hdf5_files(self, directory: Path) -> Sequence[Path]:
+        """Helper function to get all HDF5 files from a directory."""
+        return sorted(directory.glob("*.h5"))
+
     def setup(self, stage: Optional[str] = None) -> None:
+        self.train_sessions = self._get_hdf5_files(self.train_dir)
+        self.val_sessions = self._get_hdf5_files(self.val_dir)
+        self.test_sessions = self._get_hdf5_files(self.test_dir)
+        
         self.train_dataset = ConcatDataset(
             [
-                SOTimeSeriesDataset(
+                WindowedEEGDataset(
                     hdf5_path,
                     transform=self.train_transforms,
                     window_length=self.window_length,
-                    padding=self.padding,
-                    jitter=True,
+                    stride=self.stride,
+                    keep_ratio=self.keep_ratio,
                 )
                 for hdf5_path in self.train_sessions
             ]
         )
         self.val_dataset = ConcatDataset(
             [
-                SOTimeSeriesDataset(
+                WindowedEEGDataset(
                     hdf5_path,
                     transform=self.val_transforms,
-                    window_length=self.val_test_window_length,
-                    padding=self.padding,
-                    jitter=False,
+                    window_length=self.window_length,
+                    stride=self.stride,
+                    keep_ratio=self.keep_ratio,
                 )
                 for hdf5_path in self.val_sessions
             ]
         )
         self.test_dataset = ConcatDataset(
             [
-                SOTimeSeriesDataset(
+                WindowedEEGDataset(
                     hdf5_path,
                     transform=self.test_transforms,
-                    window_length=self.val_test_window_length,
-                    padding=(0, 0),
-                    jitter=False,
+                    window_length=self.window_length,
+                    stride=self.stride,
+                    keep_ratio=self.keep_ratio,
                 )
                 for hdf5_path in self.test_sessions
             ]
@@ -175,29 +227,35 @@ class WindowedEEGDataModule(pl.LightningDataModule):
             shuffle=False,
         )
 
-#%% Test the dataset
 if __name__ == '__main__':
-    
-    from utils.transforms import population_zscore_transform
+    # test
+    datamodule = WindowedEEGDataModule(
+        window_length=150,
+        batch_size=32,
+        num_workers=0,
+        train_dir="data/processed/train",
+        val_dir="data/processed/val",
+        test_dir="data/processed/test",
+        #transforms={"train": population_zscore_transform(0, 1)}
+    )
+
+    # Setup the DataModule
+    datamodule.setup()
+
+    # Get the DataLoader for training
+    train_loader = datamodule.train_dataloader()
+
+    # Fetch an example batch
+    example_batch = next(iter(train_loader))
+
+    # Inspect the batch
+    print("Example Batch Shapes:")
+    for i, tensor in enumerate(example_batch):
+        # plot each tensor
+        plt.plot(tensor[0].numpy().T)
+        print(f"Tensor {i}: {tensor.shape}")
 
 
-    dataset = SOTimeSeriesDataset(
-        hdf5_file = cfg.data.test_hdf5_file,
-        label_time = -5,
-        transform = population_zscore_transform(
-            cfg.transforms.z_score_mu,
-            cfg.transforms.z_score_sigma
-        ))
+#%%
 
-
-    # get an element from the dataset
-
-    plt.plot(dataset[23][0].numpy().T)
-
-    # get the mean and std of the data in the dataset
-    stds, means = [], []
-    for i in range(len(dataset)):
-        stds.append(dataset[i][0].std().item())
-        means.append(dataset[i][0].mean().item())
-    print(f"Mean: {np.mean(means):.2f}, Std: {np.mean(stds):.2f}")
 # %%
