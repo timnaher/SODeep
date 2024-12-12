@@ -17,6 +17,9 @@ __pycache__/
 events*
 hparams*
 
+# hydra
+outputs/
+
 
 # C extensions
 *.so
