@@ -30,7 +30,7 @@ def load_model_for_inference(checkpoint_path, model_config_path):
 # File paths
 #checkpoint_path = "/Users/timnaher/Documents/PhD/Projects/SODeep/checkpoints/test-epoch=0-val_loss=0.17.ckpt"
 #model_config_path = "/Users/timnaher/Documents/PhD/Projects/SODeep/tb_logs/SOD_v1/version_3/hparams.yaml"
-basepath = "/Users/timnaher/Documents/PhD/Projects/SODeep/tb_logs/SOD_v1/version_12"
+basepath = "/Users/timnaher/Documents/PhD/Projects/SODeep/tb_logs/SOD_v1/version_0"
 # take the only file in that is in basepath/checkpoints
 checkpoint_path = basepath + "/checkpoints/" + [f for f in os.listdir(basepath + "/checkpoints") if f.endswith(".ckpt")][0]
 model_config_path = basepath + "/hparams.yaml"
@@ -114,6 +114,8 @@ def update(frame):
 
     # First subplot: EEG data with shaded predictions
     axs[0].plot(time[start:end], all_chunks[start:end], label="EEG Data", color="black", alpha=0.8)
+    # horizontal dashed line at -75
+    axs[0].axhline(y=-75, color='r', linestyle='--',alpha=0.5)
 
     axs[0].fill_between(
         time[start:end], ymin1, ymax1,

@@ -36,7 +36,8 @@ class SOD_v1(pl.LightningModule):
         encoder_layer = TransformerEncoderLayer(
             d_model=d_model, nhead=self.nhead,
             dim_feedforward=self.dim_feedforward,
-            dropout=self.dropout
+            dropout=self.dropout,
+            batch_first=True
         )
 
         self.transformer_encoder = TransformerEncoder(encoder_layer, num_layers=self.num_attention_layers)
@@ -53,16 +54,13 @@ class SOD_v1(pl.LightningModule):
         features = self.resblock3(features)
         
         # Transformer expects (seq_len, batch, d_model)
-        features = features.permute(2, 0, 1)  # (time, batch, channels)
+        features = features.permute(0, 2, 1)  # (time, batch, channels)
         
         # Add positional encoding
         features = self.pos_encoder(features)
         
         # Pass through transformer
         transformed = self.transformer_encoder(features)
-        
-        # Back to (batch, time, channels)
-        transformed = transformed.permute(1, 0, 2)
         
         # Decode to classes
         class_logits = self.decoder_lin(transformed)  # (batch, time_down, num_classes)

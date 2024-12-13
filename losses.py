@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 class CEtransitionLoss(nn.Module):
-    def __init__(self, smoothness_weight=0.01, transition_penalty_weight=0.5):
+    def __init__(self, smoothness_weight=0, transition_penalty_weight=0.1):
         super(CEtransitionLoss, self).__init__()
         self.ce_loss = nn.CrossEntropyLoss()
         self.smoothness_weight = smoothness_weight
