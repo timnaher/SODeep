@@ -16,7 +16,7 @@ class ZScoreTransform:
     def __call__(self, x):
         return (x - self.mean) / self.std
 
-def population_zscore_transform(mean, std):
+def population_zscore_transform(mean=0, std=50):
     return {"transform": ZScoreTransform(mean, std)}
 
 

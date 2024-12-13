@@ -15,9 +15,20 @@ import torch
 from torch.utils.data import Dataset
 import random
 
+from hydra.utils import instantiate
+
+import h5py
+import numpy as np
+import random
+import torch
+from torch.utils.data import Dataset
+from scipy.signal import savgol_filter
 
 class WindowedEEGDataset(Dataset):
-    def __init__(self, hdf5_file, window_length, transform=None, stride=None, keep_ratio=0.1):
+    def __init__(self, hdf5_file, window_length=5,
+                transform=None, stride=None,
+                keep_ratio=0.1, apply_savgol=False,
+                polyorder=2, deriv=0):
         """
         PyTorch Dataset for windowed access to EEG data stored in HDF5 files.
 
@@ -28,12 +39,19 @@ class WindowedEEGDataset(Dataset):
             stride (int, optional): Stride between consecutive windows.
                 Defaults to `window_length` (non-overlapping windows).
             keep_ratio (float, optional): Fraction of zero-only windows to keep.
+            apply_savgol (bool, optional): Whether to apply Savitzky-Golay filtering.
+            polyorder (int, optional): Polynomial order for Savitzky-Golay filter. Defaults to 3.
+            deriv (int, optional): Derivative order for Savitzky-Golay filter. Defaults to 0 (no derivative).
         """
         self.hdf5_file = hdf5_file
         self.window_length = window_length
         self.transform = transform
         self.stride = stride or window_length
         self.keep_ratio = keep_ratio
+        self.apply_savgol = apply_savgol
+        self.polyorder = polyorder
+        self.deriv = deriv
+        
 
         # Open HDF5 file to determine dataset size
         with h5py.File(hdf5_file, "r") as hdf:
@@ -44,19 +62,21 @@ class WindowedEEGDataset(Dataset):
         # Precompute windows with balancing
         self.windows = self._compute_windows(keep_ratio=self.keep_ratio)
 
-    def _compute_windows(self, keep_ratio=0.1):
+    def _compute_windows(self, keep_ratio=1.0):
         """
         Compute start and end indices for all windows and balance zero-only windows.
         Remove windows containing breaks in the `time` vector.
 
         Args:
-            keep_ratio (float): Fraction of zero-only windows to keep.
+            keep_ratio (float): Fraction of zero-only windows to keep relative to non-zero windows. 
+                                If 1, keep as many zero-only windows as non-zero windows.
 
         Returns:
             List[Tuple[int, int]]: A list of tuples (start, end).
         """
         windows = []
         zero_only_windows = []
+        non_zero_windows = []
 
         with h5py.File(self.hdf5_file, "r") as hdf:
             time = np.array(hdf["time"][:])  # Load the `time` vector
@@ -71,18 +91,34 @@ class WindowedEEGDataset(Dataset):
                 # Add valid window
                 windows.append((start, end))
 
-                # Check if the window contains only zeros
+                # Categorize the window as zero-only or non-zero
                 if (self.targets[start:end] == 0).all():
                     zero_only_windows.append((start, end))
+                else:
+                    non_zero_windows.append((start, end))
 
-        # Randomly sample a subset of zero-only windows
-        sampled_zero_windows = random.sample(zero_only_windows, int(len(zero_only_windows) * keep_ratio))
+        # Compute the number of zero-only windows to keep
+        num_non_zero_windows = len(non_zero_windows)
+        max_zero_windows = int(num_non_zero_windows * keep_ratio)
+        sampled_zero_windows = random.sample(zero_only_windows, min(len(zero_only_windows), max_zero_windows))
 
-        # Combine sampled zero-only windows with all other windows
-        non_zero_windows = [w for w in windows if w not in zero_only_windows]
+        # Combine sampled zero-only windows with all non-zero windows
         balanced_windows = non_zero_windows + sampled_zero_windows
+        random.shuffle(balanced_windows)  # Optional: Shuffle the windows for randomness
 
         return balanced_windows
+
+    def _apply_savgol_filter(self, data):
+        """
+        Apply Savitzky-Golay filter with optional derivative to the data.
+
+        Args:
+            data (numpy.ndarray): EEG data of shape [channels, time].
+
+        Returns:
+            numpy.ndarray: Filtered data of shape [channels, time].
+        """
+        return savgol_filter(data, window_length=self.window_length, polyorder=self.polyorder, deriv=self.deriv, axis=1)
 
     def __len__(self):
         return len(self.windows)
@@ -97,8 +133,15 @@ class WindowedEEGDataset(Dataset):
             data = hdf["eeg"][start:end, :]
             label = hdf["targets"][start:end]  # Targets for the window
 
+        # Transpose for [channels, time]
+        data = data.T
+
+        # Apply Savitzky-Golay filter if specified
+        if self.apply_savgol:
+            data = self._apply_savgol_filter(data)
+
         # Convert to PyTorch tensors
-        data = torch.tensor(data.T, dtype=torch.float32)  # Transpose for [channels, time]
+        data = torch.tensor(data, dtype=torch.float32)
         label = torch.tensor(label, dtype=torch.long)
 
         # Apply transformation if specified
@@ -106,6 +149,7 @@ class WindowedEEGDataset(Dataset):
             data = self.transform(data)
 
         return data, label
+
 
 
 
@@ -135,7 +179,10 @@ class WindowedEEGDataModule(pl.LightningDataModule):
         val_dir: Union[str, Path],
         test_dir: Union[str, Path],
         val_test_window_length: Optional[int] = None,
-        transforms: dict = None,
+        transforms: Optional[dict] = None,  # Use dictionary for transforms
+        apply_savgol: bool = False,
+        polyorder: int = 3,
+        deriv: int = 0,
     ) -> None:
         super().__init__()
 
@@ -145,24 +192,30 @@ class WindowedEEGDataModule(pl.LightningDataModule):
         self.batch_size = batch_size
         self.num_workers = num_workers
 
+        self.apply_savgol = apply_savgol
+        self.polyorder = polyorder
+        self.deriv = deriv
+
         self.train_dir = Path(train_dir)
         self.val_dir = Path(val_dir)
         self.test_dir = Path(test_dir)
 
-        # Transforms can be provided as a dictionary for train, val, test
-        self.train_transforms = transforms.get("train") if transforms else None
-        self.val_transforms = transforms.get("val") if transforms else None
-        self.test_transforms = transforms.get("test") if transforms else None
+        # Instantiate transforms if provided
+        self.train_transforms = instantiate(transforms.get("train")) if transforms and "train" in transforms else None
+        self.val_transforms = instantiate(transforms.get("val")) if transforms and "val" in transforms else None
+        self.test_transforms = instantiate(transforms.get("test")) if transforms and "test" in transforms else None
+
 
     def _get_hdf5_files(self, directory: Path) -> Sequence[Path]:
         """Helper function to get all HDF5 files from a directory."""
         return sorted(directory.glob("*.h5"))
 
     def setup(self, stage: Optional[str] = None) -> None:
+        print("Setting up datasets...")
         self.train_sessions = self._get_hdf5_files(self.train_dir)
         self.val_sessions = self._get_hdf5_files(self.val_dir)
         self.test_sessions = self._get_hdf5_files(self.test_dir)
-        
+
         self.train_dataset = ConcatDataset(
             [
                 WindowedEEGDataset(
@@ -171,6 +224,8 @@ class WindowedEEGDataModule(pl.LightningDataModule):
                     window_length=self.window_length,
                     stride=self.stride,
                     keep_ratio=self.keep_ratio,
+                    apply_savgol=self.apply_savgol,
+                    deriv=self.deriv,
                 )
                 for hdf5_path in self.train_sessions
             ]
@@ -183,6 +238,8 @@ class WindowedEEGDataModule(pl.LightningDataModule):
                     window_length=self.window_length,
                     stride=self.stride,
                     keep_ratio=self.keep_ratio,
+                    apply_savgol=self.apply_savgol,
+                    deriv=self.deriv,
                 )
                 for hdf5_path in self.val_sessions
             ]
@@ -195,6 +252,9 @@ class WindowedEEGDataModule(pl.LightningDataModule):
                     window_length=self.window_length,
                     stride=self.stride,
                     keep_ratio=self.keep_ratio,
+                    apply_savgol=self.apply_savgol,
+                    deriv=self.deriv,
+
                 )
                 for hdf5_path in self.test_sessions
             ]
@@ -205,6 +265,7 @@ class WindowedEEGDataModule(pl.LightningDataModule):
             self.train_dataset,
             batch_size=self.batch_size,
             num_workers=self.num_workers,
+            persistent_workers=True,
             pin_memory=True,
             shuffle=True,
         )
@@ -214,6 +275,7 @@ class WindowedEEGDataModule(pl.LightningDataModule):
             self.val_dataset,
             batch_size=self.batch_size,
             num_workers=self.num_workers,
+            persistent_workers=True,
             pin_memory=True,
             shuffle=False,
         )
@@ -223,6 +285,7 @@ class WindowedEEGDataModule(pl.LightningDataModule):
             self.test_dataset,
             batch_size=self.batch_size,
             num_workers=self.num_workers,
+            persistent_workers=True,
             pin_memory=True,
             shuffle=False,
         )

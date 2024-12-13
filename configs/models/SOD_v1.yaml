@@ -1,0 +1,36 @@
+# Model parameters
+name: SOD_v1
+
+model:
+  _target_: model.SOD_v1
+  input_length: 150
+  num_classes: 3
+  num_filters1: 16
+  num_filters2: 32
+  num_filters3: 64
+  learning_rate: 0.01
+  nhead: 2
+  num_attention_layers: 2
+  dim_feedforward: 128
+  dropout: 0.1
+
+datamodule:
+  _target_: dataset.WindowedEEGDataModule
+  window_length: 150
+  batch_size: 128
+  num_workers: 7
+  train_dir: "data/processed/train"
+  val_dir: "data/processed/val"
+  test_dir: "data/processed/test"
+  stride: 25
+  keep_ratio: 1
+  apply_savgol: 0
+  deriv: 0
+  transforms:
+      - _target_: utils.transforms.population_zscore_transform
+
+# Trainer configuration
+trainer:
+  max_epochs: 20
+  #precision: 16
+  log_every_n_steps: 1

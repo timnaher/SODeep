@@ -1,182 +1,108 @@
-#%%
-import torch.nn as nn
 import torch
+import torch.nn as nn
 import pytorch_lightning as pl
-from torch.optim.lr_scheduler import StepLR
-from omegaconf import OmegaConf
+from torch.nn import TransformerEncoder, TransformerEncoderLayer
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+from layers import ResidualBlock, CausalResidualBlock, UpsamplingDecoder, PositionalEncoding
+from losses import CEtransitionLoss
+from hydra.utils import instantiate
 
 
-class CNN_LSTM(pl.LightningModule):
-    def __init__(self, cfg):
-        super(CNN_LSTM, self).__init__()
-        self.cfg = cfg
-        self.criterion = nn.CrossEntropyLoss()
+class SOD_v1(pl.LightningModule):
+    def __init__(self, input_length, num_classes, num_filters1,
+                num_filters2, num_filters3, learning_rate,
+                nhead, num_attention_layers, dim_feedforward,
+                dropout):
 
-        # First Conv1d layer
-        self.conv1 = nn.Conv1d(in_channels=1, out_channels=cfg.n_filters1, kernel_size=3, stride=1, padding=1)
-        self.relu1 = nn.ReLU()
-        self.dropout1 = nn.Dropout(p=cfg.dropout1)
+        super(SOD_v1, self).__init__()
+        self.input_length = input_length
+        self.num_classes = num_classes
+        self.num_filters1 = num_filters1
+        self.num_filters2 = num_filters2
+        self.num_filters3 = num_filters3
+        self.learning_rate = learning_rate
+        self.nhead = nhead
+        self.num_attention_layers = num_attention_layers
+        self.dim_feedforward = dim_feedforward
+        self.dropout = dropout
+        
+        # Convolutional front-end with residual blocks
+        self.resblock1 = CausalResidualBlock(1, num_filters1, dilation=1)
+        self.resblock2 = CausalResidualBlock(num_filters1, num_filters2, dilation=2)
+        self.resblock3 = CausalResidualBlock(num_filters2, num_filters3, dilation=2)
+        
+        # Transformer setup
+        d_model = num_filters3
+        encoder_layer = TransformerEncoderLayer(
+            d_model=d_model, nhead=self.nhead,
+            dim_feedforward=self.dim_feedforward,
+            dropout=self.dropout
+        )
 
-        # Second Conv1d layer
-        self.conv2 = nn.Conv1d(in_channels=cfg.n_filters1, out_channels=cfg.n_filters2, kernel_size=4, stride=2, padding=1)
-        self.relu2 = nn.ReLU()
-        self.dropout2 = nn.Dropout(p=cfg.dropout2)
-
-        # LSTM layer
-        self.lstm = nn.LSTM(input_size=cfg.n_filters2, hidden_size=cfg.lstm_units, num_layers=cfg.lstm_layers,
-                            batch_first=True, dropout=cfg.lstm_dropout)
-
-        # Fully connected output layer
-        self.fc = nn.Linear(cfg.lstm_units, cfg.num_classes)
+        self.transformer_encoder = TransformerEncoder(encoder_layer, num_layers=self.num_attention_layers)
+        self.pos_encoder = PositionalEncoding(d_model=d_model, max_len=200)
+        
+        self.decoder_lin = nn.Linear(d_model, num_classes)
+        self.upsampler = UpsamplingDecoder(num_classes, num_classes, input_length)
+        self.loss_fn = CEtransitionLoss()
 
     def forward(self, x):
-        # Conv1D block 1
-        x = self.conv1(x)
-        x = self.relu1(x)
-        x = self.dropout1(x)
+        # x shape: (batch, 1, time)
+        features = self.resblock1(x)
+        features = self.resblock2(features)
+        features = self.resblock3(features)
+        
+        # Transformer expects (seq_len, batch, d_model)
+        features = features.permute(2, 0, 1)  # (time, batch, channels)
+        
+        # Add positional encoding
+        features = self.pos_encoder(features)
+        
+        # Pass through transformer
+        transformed = self.transformer_encoder(features)
+        
+        # Back to (batch, time, channels)
+        transformed = transformed.permute(1, 0, 2)
+        
+        # Decode to classes
+        class_logits = self.decoder_lin(transformed)  # (batch, time_down, num_classes)
+        class_logits = class_logits.permute(0, 2, 1)
+        upsampled_logits = self.upsampler(class_logits)
+        
+        return upsampled_logits  # shape: (batch, num_classes, input_length)
 
-        # Conv1D block 2
-        x = self.conv2(x)
-        x = self.relu2(x)
-        x = self.dropout2(x)
+    def compute_loss(self, logits, labels):
+        return self.loss_fn(logits, labels)
 
-        # LSTM layer
-        x = x.permute(0, 2, 1)  # (batch, time, channels)
-        x, (h_n, _) = self.lstm(x)
-
-
-        # Fully connected layer
-        x = self.fc(h_n[-1])  # Use the last hidden state for classification
-        return x
-
-    def _common_step(self, batch, stage: str):
+    def _common_step(self, batch, stage):
         data, labels = batch
-        outputs = self(data)
-        loss = self.criterion(outputs, labels)
-        acc = (outputs.argmax(dim=-1) == labels).float().mean()
-
-        # Log metrics based on stage
-        if stage == "train":
-            self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True)
-            self.log("train_acc", acc, on_step=True, on_epoch=True, prog_bar=True)
-        elif stage == "val":
-            self.log("val_loss", loss, on_step=True, on_epoch=True, prog_bar=True)
-            self.log("val_acc", acc, on_step=True, on_epoch=True, prog_bar=True)
-        elif stage == "test":
-            self.log("test_loss", loss, on_step=True, on_epoch=True, prog_bar=True)
-            self.log("test_acc", acc, on_step=True, on_epoch=True, prog_bar=True)
-
+        labels = labels.squeeze(-1)  # (batch, time)
+        logits = self(data)
+        loss = self.compute_loss(logits, labels)
+        
+        preds = logits.argmax(dim=1)
+        acc = (preds == labels).float().mean()
+        
+        self.log(f"{stage}_loss", loss, on_step=True, on_epoch=True, prog_bar=True)
+        self.log(f"{stage}_acc", acc, on_step=True, on_epoch=True, prog_bar=True)
         return loss
 
     def training_step(self, batch, batch_idx):
-        return self._common_step(batch, stage="train")
+        return self._common_step(batch, "train")
 
     def validation_step(self, batch, batch_idx):
-        return self._common_step(batch, stage="val")
+        return self._common_step(batch, "val")
 
     def test_step(self, batch, batch_idx):
-        return self._common_step(batch, stage="test")
+        return self._common_step(batch, "test")
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.cfg.learning_rate, weight_decay=0)
-        scheduler = StepLR(optimizer, step_size=5, gamma=0.5)
+        optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
+        scheduler = {
+            'scheduler': torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer, mode="min", patience=3, factor=0.5
+            ),
+            'monitor': 'val_loss' 
+        }
+
         return [optimizer], [scheduler]
-
-
-#%%
-
-cfg = OmegaConf.create({
-    "input_length": 150,
-    "num_classes": 3,
-    "n_filters1": 16,
-    "n_filters2": 32,
-    "dropout1": 0.3,
-    "dropout2": 0.3,
-    "lstm_units": 64,
-    "lstm_layers": 2,
-    "lstm_dropout": 0.1,
-    "learning_rate": 0.01,
-})
-
-
-
-datamodule = WindowedEEGDataModule(
-    window_length=cfg.input_length,
-    batch_size=32,
-    num_workers=0,
-    train_dir="data/processed/train",
-    val_dir="data/processed/val",
-    test_dir="data/processed/test",
-)
-
-# Instantiate and test the model
-model = CNN_LSTM(cfg)
-x = torch.randn(32, 1, cfg.input_length)  # Batch of 32 samples
-output = model(x)
-print(output.shape)  # Expected output shape: (32, num_classes)
-
-
-
-#%%
-from dataset import WindowedEEGDataModule
-import torch.nn as nn
-import torch
-import pytorch_lightning as pl
-from torch.optim.lr_scheduler import StepLR
-from omegaconf import OmegaConf
-from pytorch_lightning.loggers import TensorBoardLogger
-from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
-from dataset import WindowedEEGDataModule
-# Configuration
-cfg = OmegaConf.create({
-    "input_length": 150,
-    "num_classes": 3,
-    "n_filters1": 16,
-    "n_filters2": 32,
-    "dropout1": 0.3,
-    "dropout2": 0.3,
-    "lstm_units": 64,
-    "lstm_layers": 2,
-    "lstm_dropout": 0.1,
-    "learning_rate": 0.01,
-})
-
-
-# DataModule
-datamodule = WindowedEEGDataModule(
-    window_length=cfg.input_length,
-    batch_size=32,
-    num_workers=0,
-    train_dir="data/processed/train",
-    val_dir="data/processed/val",
-    test_dir="data/processed/test",
-)
-
-# Model
-model = CNN_LSTM(cfg)
-
-# Logger and Callbacks
-logger = TensorBoardLogger("tb_logs", name="cnn_lstm")
-checkpoint_callback = ModelCheckpoint(
-    monitor="val_loss",
-    dirpath="checkpoints/",
-    filename="cnn-lstm-{epoch:02d}-{val_loss:.2f}",
-    save_top_k=1,
-    mode="min",
-)
-early_stopping_callback = EarlyStopping(monitor="val_loss", patience=10, mode="min")
-
-# Trainer
-trainer = pl.Trainer(
-    max_epochs=50,
-    logger=logger,
-    callbacks=[checkpoint_callback, early_stopping_callback],
-    log_every_n_steps=10,
-)
-
-# Train the model
-trainer.fit(model, datamodule)
-
-# Test the model
-trainer.test(model, datamodule)
-# %%

@@ -1,4 +1,4 @@
-# Standard Library Imports
+#%%
 import math
 
 import torch
@@ -7,14 +7,13 @@ import pytorch_lightning as pl
 from torch.optim.lr_scheduler import StepLR
 from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
-from pytorch_lightning.profilers import PyTorchProfiler
+from pytorch_lightning.profilers import PyTorchProfiler, AdvancedProfiler
 
 import hydra
 from hydra.utils import instantiate
 from omegaconf import OmegaConf
 
-
-@hydra.main(config_path="configs/models", config_name="SOD_v1", version_base=None)
+@hydra.main(config_path="configs/models/", config_name="SOD_v1", version_base=None)
 def main(cfg):
     model = instantiate(cfg.model)
     datamodule = instantiate(cfg.datamodule)
@@ -46,6 +45,7 @@ def main(cfg):
 
     trainer.fit(model, datamodule)
 
-
 if __name__ == "__main__":
     main()
+
+# %%

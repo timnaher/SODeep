@@ -130,7 +130,7 @@ datamodule = WindowedEEGDataModule(
     val_dir=cfg.val_dir,
     test_dir=cfg.test_dir,
     stride =50,
-    keep_ratio = 0.05
+    keep_ratio = 0.1
 )
 
 # Model
