@@ -8,6 +8,7 @@ from torch.optim.lr_scheduler import StepLR
 from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 from pytorch_lightning.profilers import PyTorchProfiler
+from utils.loggers import LogLearningRateCallback
 
 import hydra
 from hydra.utils import instantiate
@@ -32,16 +33,20 @@ def main(cfg):
         mode="min",
     )
     early_stopping_callback = EarlyStopping(
-        monitor="val_loss", patience=4, mode="min"
+        monitor="val_loss", patience=10, mode="min"
     )
 
     # Trainer Configuration
     trainer = pl.Trainer(
-        min_epochs=1,
+        min_epochs=30,
         max_epochs=cfg.trainer.max_epochs,
         logger=logger,
-        callbacks=[checkpoint_callback, early_stopping_callback],
+        callbacks=[
+            checkpoint_callback,
+            early_stopping_callback,
+            LogLearningRateCallback()],
         log_every_n_steps=cfg.trainer.log_every_n_steps,
+        accelerator="cpu"
     )
 
     trainer.fit(model, datamodule)

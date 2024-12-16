@@ -9,6 +9,7 @@ import pytorch_lightning as pl
 from torch.optim.lr_scheduler import StepLR
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
 
+
 class TimeSeriesAttention(nn.Module):
     def __init__(self, input_dim, attention_dim):
         super(TemporalAttention, self).__init__()
@@ -74,26 +75,77 @@ class ResidualBlock(nn.Module):
         return out
 
 
+class SequentialLSTM(nn.Module):
+    """
+    LSTM where each forward() call computes only a single time step, to be compatible
+    looping over time manually.
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+    NOTE: Need to manually reset the state in outer context after each trajectory!
+    """
+
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        hidden_size: int,
+        num_layers: int = 1,
+        scale: float = 1.0,
+    ):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        self.lstm = nn.LSTM(in_channels, hidden_size, num_layers, batch_first=True)
+        self.hidden: tuple[torch.Tensor, torch.Tensor] | None = None
+        self.mlp_out = nn.Sequential(
+            nn.LeakyReLU(), nn.Linear(hidden_size, out_channels)
+        )
+        self.scale = scale
+
+    def reset_state(self):
+        self.hidden = None
+
+    def forward(self, x):
+        """Forward pass for a single time step, where x is (batch, channel.)"""
+
+        if self.hidden is None:
+            # Initialize hidden state with zeros
+            batch_size = x.size(0)
+            device = x.device
+            size = (self.num_layers, batch_size, self.hidden_size)
+            self.hidden = (torch.zeros(*size).to(device), torch.zeros(*size).to(device))
+
+        out, self.hidden = self.lstm(x[:, None], self.hidden)
+        return self.mlp_out(out[:, 0]) * self.scale
+
+    def _non_sequential_forward(self, x):
+        """Non-sequential forward pass, where x is (batch, time, channel)."""
+        return self.mlp_out(self.lstm(x)[0]) * self.scale
+
+
 
 class CausalResidualBlock(nn.Module):
     def __init__(self, in_filters, out_filters, dilation=1):
         super(CausalResidualBlock, self).__init__()
-        self.dilation = dilation
         self.kernel_size = 3
-        self.padding = (self.kernel_size - 1) * dilation  # left padding only
-
-        self.conv1 = nn.Conv1d(in_filters, out_filters, kernel_size=self.kernel_size, 
-                               dilation=dilation, padding=0)
+        
+        # Both convolutions use the same dilation
+        self.padding = (self.kernel_size - 1) * dilation  # Left padding only
+        
+        self.conv1 = nn.Conv1d(
+            in_filters, out_filters, kernel_size=self.kernel_size,
+            dilation=dilation, padding=0  # Padding applied manually
+        )
         self.bn1 = nn.BatchNorm1d(out_filters)
-        self.relu = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv1d(out_filters, out_filters, kernel_size=self.kernel_size, 
-                               dilation=dilation, padding=0)
+        
+        self.conv2 = nn.Conv1d(
+            out_filters, out_filters, kernel_size=self.kernel_size,
+            dilation=dilation, padding=0  # Padding applied manually
+        )
         self.bn2 = nn.BatchNorm1d(out_filters)
-
+        
+        self.relu = nn.ReLU(inplace=True)
+        
+        # Downsample layer if the number of filters changes
         if in_filters != out_filters:
             self.downsample = nn.Conv1d(in_filters, out_filters, kernel_size=1)
         else:
@@ -101,25 +153,26 @@ class CausalResidualBlock(nn.Module):
 
     def forward(self, x):
         identity = x
-
-        # Left-pad the input so that the convolution is causal
-        # The padding tuple is (pad_left, pad_right)
-        # We only pad on the left to ensure no future leakage.
+        
+        # First convolution with left padding for causality
         out = F.pad(x, (self.padding, 0))
         out = self.conv1(out)
         out = self.bn1(out)
         out = self.relu(out)
-
+        
+        # Second convolution with left padding for causality
         out = F.pad(out, (self.padding, 0))
         out = self.conv2(out)
         out = self.bn2(out)
-
+        
+        # Add residual connection
         if self.downsample is not None:
             identity = self.downsample(identity)
-
+        
         out += identity
         out = self.relu(out)
         return out
+
 
 
 

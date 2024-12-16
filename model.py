@@ -1,38 +1,56 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import pytorch_lightning as pl
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
-from torch.optim.lr_scheduler import ReduceLROnPlateau
-from layers import ResidualBlock, CausalResidualBlock, UpsamplingDecoder, PositionalEncoding
+from torch.optim.lr_scheduler import ReduceLROnPlateau, StepLR
+from layers import ResidualBlock, CausalResidualBlock, UpsamplingDecoder, PositionalEncoding, SequentialLSTM
 from losses import CEtransitionLoss
 from hydra.utils import instantiate
+from sklearn.metrics import precision_score, recall_score, f1_score
+
 
 
 class SOD_v1(pl.LightningModule):
-    def __init__(self, input_length, num_classes, num_filters1,
-                num_filters2, num_filters3, learning_rate,
-                nhead, num_attention_layers, dim_feedforward,
-                dropout):
-
+    def __init__(self, input_length, num_classes,
+                 learning_rate, nhead, num_attention_layers,
+                 dim_feedforward, dropout, resblock_config,
+                 pred_threshold, smoothness_weight=0.1,
+                 transition_penalty_weight=0.1, lr_decay_nstep=4,
+                 lr_decay_factor=0.5, intermediate_dim=128):
+        """
+        Args:
+            resblock_config: List of dictionaries where each dict specifies
+                             {'in_filters': int, 'out_filters': int, 'dilation': int}.
+            intermediate_dim: Dimension of the intermediate layer in the decoder.
+        """
         super(SOD_v1, self).__init__()
         self.input_length = input_length
         self.num_classes = num_classes
-        self.num_filters1 = num_filters1
-        self.num_filters2 = num_filters2
-        self.num_filters3 = num_filters3
         self.learning_rate = learning_rate
         self.nhead = nhead
         self.num_attention_layers = num_attention_layers
         self.dim_feedforward = dim_feedforward
         self.dropout = dropout
-        
-        # Convolutional front-end with residual blocks
-        self.resblock1 = CausalResidualBlock(1, num_filters1, dilation=1)
-        self.resblock2 = CausalResidualBlock(num_filters1, num_filters2, dilation=2)
-        self.resblock3 = CausalResidualBlock(num_filters2, num_filters3, dilation=2)
-        
+        self.threshold = pred_threshold
+        self.smoothness_weight = smoothness_weight
+        self.transition_penalty_weight = transition_penalty_weight
+        self.lr_decay_nstep = lr_decay_nstep
+        self.lr_decay_factor = lr_decay_factor
+
+        # Dynamically create residual blocks
+        self.residual_blocks = nn.ModuleList()
+        for block_config in resblock_config:
+            self.residual_blocks.append(
+                CausalResidualBlock(
+                    in_filters=block_config['in_filters'],
+                    out_filters=block_config['out_filters'],
+                    dilation=block_config['dilation']
+                )
+            )
+
         # Transformer setup
-        d_model = num_filters3
+        d_model = resblock_config[-1]['out_filters']  # Final number of filters
         encoder_layer = TransformerEncoderLayer(
             d_model=d_model, nhead=self.nhead,
             dim_feedforward=self.dim_feedforward,
@@ -41,9 +59,128 @@ class SOD_v1(pl.LightningModule):
         )
 
         self.transformer_encoder = TransformerEncoder(encoder_layer, num_layers=self.num_attention_layers)
-        self.pos_encoder = PositionalEncoding(d_model=d_model, max_len=200)
+        self.pos_encoder = PositionalEncoding(d_model=d_model, max_len=500)
         
-        self.decoder_lin = nn.Linear(d_model, num_classes)
+        # Modify the decoder with two fully connected layers
+        self.decoder_lin = nn.Sequential(
+            nn.Linear(d_model, intermediate_dim),  # First fully connected layer
+            nn.ReLU(),                             # Activation function
+            nn.Linear(intermediate_dim, num_classes)  # Second fully connected layer
+        )
+        
+        self.upsampler = UpsamplingDecoder(num_classes, num_classes, input_length)
+        self.loss_fn = CEtransitionLoss(
+            self.smoothness_weight,
+            self.transition_penalty_weight)
+
+    def forward(self, x):
+        # x shape: (batch, 1, time)
+        features = x
+        for resblock in self.residual_blocks:
+            features = resblock(features)
+
+        # Transformer expects (seq_len, batch, d_model)
+        features = features.permute(0, 2, 1)  # (batch, time, channels)
+
+        # Add positional encoding
+        features = self.pos_encoder(features)
+
+        # Pass through transformer
+        transformed = self.transformer_encoder(features)
+
+        # Decode to classes
+        class_logits = self.decoder_lin(transformed)  # (batch, time_down, num_classes)
+        class_logits = class_logits.permute(0, 2, 1)
+        upsampled_logits = self.upsampler(class_logits)
+
+        # Compute softmax probabilities
+        probabilities = F.softmax(upsampled_logits, dim=1)  # (batch, num_classes, input_length)
+
+        return upsampled_logits, probabilities  # logits and probabilities
+    
+    def compute_loss(self, logits, labels):
+        return self.loss_fn(
+            logits, labels
+        )
+
+    def _common_step(self, batch, stage):
+        data, labels = batch
+        labels = labels.squeeze(-1)  # (batch, time)
+        logits, probabilities = self(data)
+
+        # Threshold-based prediction logic
+        preds = torch.zeros_like(labels)  # Default to class 0
+        max_probs, max_classes = probabilities.max(dim=1)
+        threshold_mask = max_probs >= 0.8
+        preds[threshold_mask] = max_classes[threshold_mask]
+
+        loss = self.compute_loss(logits, labels)
+
+        # Calculate accuracy
+        acc = (preds == labels).float().mean()
+
+        # Log overall metrics
+        self.log(f"{stage}_loss", loss, on_step=True, on_epoch=True, prog_bar=True)
+        self.log(f"{stage}_acc", acc, on_step=True, on_epoch=True, prog_bar=True)
+
+        return loss
+
+    def training_step(self, batch, batch_idx):
+        return self._common_step(batch, "train")
+
+    def validation_step(self, batch, batch_idx):
+        return self._common_step(batch, "val")
+
+    def test_step(self, batch, batch_idx):
+        return self._common_step(batch, "test")
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
+        scheduler = {
+            'scheduler': torch.optim.lr_scheduler.StepLR(
+                optimizer,
+                step_size=self.lr_decay_nstep,
+                gamma=self.lr_decay_factor
+            ),
+            'interval': 'epoch'  # Reduces learning rate every 3 epochs
+        }
+
+        return [optimizer], [scheduler]
+
+
+
+#%%
+class SOD_lstm1(pl.LightningModule):
+    def __init__(self, input_length, num_classes, num_filters1,
+                 num_filters2, num_filters3, learning_rate,
+                 hidden_size, num_lstm_layers, scale):
+        super(SOD_lstm1, self).__init__()
+        self.input_length = input_length
+        self.num_classes = num_classes
+        self.num_filters1 = num_filters1
+        self.num_filters2 = num_filters2
+        self.num_filters3 = num_filters3
+        self.learning_rate = learning_rate
+        self.hidden_size = hidden_size
+        self.num_lstm_layers = num_lstm_layers
+        self.scale = scale
+
+        # Convolutional front-end with residual blocks
+        self.resblock1 = CausalResidualBlock(1, num_filters1, dilation=2)
+        self.resblock2 = CausalResidualBlock(num_filters1, num_filters2, dilation=3)
+        self.resblock3 = CausalResidualBlock(num_filters2, num_filters3, dilation=4)
+        self.resblock4 = CausalResidualBlock(num_filters2, num_filters3, dilation=5)
+        self.resblock5 = CausalResidualBlock(num_filters2, num_filters3, dilation=6)
+
+        # LSTM for sequential processing
+        self.lstm = SequentialLSTM(
+            in_channels=num_filters3,
+            out_channels=num_classes * 2,  # Assuming pos and vel components
+            hidden_size=hidden_size,
+            num_layers=num_lstm_layers,
+            scale=scale
+        )
+
         self.upsampler = UpsamplingDecoder(num_classes, num_classes, input_length)
         self.loss_fn = CEtransitionLoss()
 
@@ -52,21 +189,27 @@ class SOD_v1(pl.LightningModule):
         features = self.resblock1(x)
         features = self.resblock2(features)
         features = self.resblock3(features)
+        features = self.resblock4(features)
+        features = self.resblock5(features)
         
-        # Transformer expects (seq_len, batch, d_model)
-        features = features.permute(0, 2, 1)  # (time, batch, channels)
+        # LSTM expects (batch, time, channels)
+        features = features.permute(0, 2, 1)  # (batch, time, channels)
         
-        # Add positional encoding
-        features = self.pos_encoder(features)
-        
-        # Pass through transformer
-        transformed = self.transformer_encoder(features)
+        # Reset LSTM state
+        self.lstm.reset_state()
+
+        # Process through LSTM
+        outputs = []
+        for t in range(features.shape[1]):  # Loop over time
+            output = self.lstm(features[:, t])  # (batch, out_channels)
+            outputs.append(output)
+
+        outputs = torch.stack(outputs, dim=1)  # (batch, time, out_channels)
         
         # Decode to classes
-        class_logits = self.decoder_lin(transformed)  # (batch, time_down, num_classes)
-        class_logits = class_logits.permute(0, 2, 1)
+        class_logits = outputs.permute(0, 2, 1)  # (batch, channels, time)
         upsampled_logits = self.upsampler(class_logits)
-        
+
         return upsampled_logits  # shape: (batch, num_classes, input_length)
 
     def compute_loss(self, logits, labels):
@@ -100,7 +243,16 @@ class SOD_v1(pl.LightningModule):
             'scheduler': torch.optim.lr_scheduler.ReduceLROnPlateau(
                 optimizer, mode="min", patience=3, factor=0.5
             ),
-            'monitor': 'val_loss' 
+            'monitor': 'val_loss'
         }
 
         return [optimizer], [scheduler]
+
+if __name__ == "__main__":
+    model = SOD_v1(input_length=150, num_classes=3, num_filters1=32, num_filters2=64, num_filters3=128,
+                   learning_rate=0.001, nhead=4, num_attention_layers=2, dim_feedforward=256, dropout=0.1)
+
+    print(model)
+
+
+#%%

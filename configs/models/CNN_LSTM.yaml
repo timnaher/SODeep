@@ -18,7 +18,7 @@ training:
   log_every_n_steps: 1     # Log frequency during training
 
 dataloader:
-  batch_size: 64           # Batch size for training and validation
+  batch_size: 512           # Batch size for training and validation
 
 data:
   train_hdf5_file: "/Users/timnaher/Documents/PhD/Projects/SODeep/data/leave_one_par_out/train.h5"

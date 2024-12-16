@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 class CEtransitionLoss(nn.Module):
-    def __init__(self, smoothness_weight=0, transition_penalty_weight=0.1):
+    def __init__(self, smoothness_weight=0.1, transition_penalty_weight=0.2):
         super(CEtransitionLoss, self).__init__()
         self.ce_loss = nn.CrossEntropyLoss()
         self.smoothness_weight = smoothness_weight
@@ -18,7 +18,7 @@ class CEtransitionLoss(nn.Module):
 
         # Transition penalty
         preds = logits.argmax(dim=1)  # Get predictions: (batch, time)
-        invalid_transitions = {(0, 2): 1, (2, 1): 1, (1, 0): 1}
+        invalid_transitions = {(0, 2): 5, (2, 1): 1, (1, 0): 5}
         penalties = []
 
         for batch_idx in range(preds.shape[0]):

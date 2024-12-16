@@ -209,5 +209,80 @@ plt.plot(predictions.detach().numpy()[0,:,:].T)
 plt.plot(ground_truths.T)
 # %%
 
+import time
+import torch
+import torch.nn as nn
+import torch.optim as optim
+
+# Check device availability
+device_cpu = torch.device("cpu")
+device_mps = torch.device("mps") if torch.backends.mps.is_available() else None
+
+# Simple model: A small MLP
+class SimpleNet(nn.Module):
+    def __init__(self, input_size=100, hidden_size=64, num_classes=10):
+        super(SimpleNet, self).__init__()
+        self.fc1 = nn.Linear(input_size, hidden_size)
+        self.relu = nn.ReLU()
+        self.fc2 = nn.Linear(hidden_size, num_classes)
+        
+    def forward(self, x):
+        out = self.fc1(x)
+        out = self.relu(out)
+        out = self.fc2(out)
+        return out
+
+# Synthetic dataset
+# Let's just create random inputs and targets
+input_size = 1000
+num_classes = 10
+num_samples = 50000
+batch_size = 1024
+
+X = torch.randn(num_samples, input_size)
+y = torch.randint(0, num_classes, (num_samples,))
+
+# Simple data loader function
+def get_batches(X, y, batch_size):
+    for i in range(0, len(X), batch_size):
+        yield X[i:i+batch_size], y[i:i+batch_size]
+
+def train_model(model, device, X, y, batch_size, epochs=2):
+    model.to(device)
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.SGD(model.parameters(), lr=0.01)
+    
+    start_time = time.time()
+    for epoch in range(epochs):
+        for xb, yb in get_batches(X, y, batch_size):
+            xb, yb = xb.to(device), yb.to(device)
+            optimizer.zero_grad()
+            outputs = model(xb)
+            loss = criterion(outputs, yb)
+            loss.backward()
+            optimizer.step()
+    end_time = time.time()
+    return end_time - start_time
+
+# Train on CPU
+model_cpu = SimpleNet(input_size=input_size, hidden_size=64, num_classes=num_classes)
+cpu_time = train_model(model_cpu, device_cpu, X, y, batch_size)
+
+print(f"CPU training time: {cpu_time:.4f} seconds")
+
+if device_mps:
+    # Train on MPS
+    model_mps = SimpleNet(input_size=input_size, hidden_size=64, num_classes=num_classes)
+    mps_time = train_model(model_mps, device_mps, X, y, batch_size)
+    print(f"MPS training time: {mps_time:.4f} seconds")
+    
+    # Compare
+    if mps_time < cpu_time:
+        print("MPS was faster.")
+    else:
+        print("CPU was faster or roughly the same.")
+else:
+    print("MPS not available on this system.")
+
 
 # %%
