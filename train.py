@@ -15,6 +15,7 @@ from hydra.utils import instantiate
 from omegaconf import OmegaConf
 
 
+
 @hydra.main(config_path="configs/models", config_name="SOD_v1", version_base=None)
 def main(cfg):
     model = instantiate(cfg.model)
@@ -50,7 +51,6 @@ def main(cfg):
     )
 
     trainer.fit(model, datamodule)
-
 
 if __name__ == "__main__":
     main()

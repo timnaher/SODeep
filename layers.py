@@ -124,9 +124,10 @@ class SequentialLSTM(nn.Module):
 
 
 class CausalResidualBlock(nn.Module):
-    def __init__(self, in_filters, out_filters, dilation=1):
+    def __init__(self, in_filters, out_filters, is_resid = True, dilation=1):
         super(CausalResidualBlock, self).__init__()
         self.kernel_size = 3
+        self.is_resid = is_resid
         
         # Both convolutions use the same dilation
         self.padding = (self.kernel_size - 1) * dilation  # Left padding only
@@ -168,8 +169,10 @@ class CausalResidualBlock(nn.Module):
         # Add residual connection
         if self.downsample is not None:
             identity = self.downsample(identity)
-        
-        out += identity
+
+        if self.is_resid:
+            out += identity 
+
         out = self.relu(out)
         return out
 

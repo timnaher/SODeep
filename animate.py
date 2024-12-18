@@ -31,13 +31,13 @@ def load_model_for_inference(checkpoint_path, model_config_path):
     return model
 
 # File paths
-basepath = "/Users/timnaher/Documents/PhD/Projects/SODeep/tb_logs/SOD_v1/version_23"
+basepath = "/Users/timnaher/Documents/PhD/Projects/SODeep/tb_logs/combined_tds_model/version_3"
 checkpoint_path = basepath + "/checkpoints/" + [f for f in os.listdir(basepath + "/checkpoints") if f.endswith(".ckpt")][0]
 model_config_path = basepath + "/hparams.yaml"
 print(checkpoint_path)
 print(model_config_path)
 
-filename = "/Users/timnaher/Documents/PhD/Projects/SODeep/data/processed/test/sd_ses-18.h5"
+filename = "/Users/timnaher/Documents/PhD/Projects/SODeep/data/processed/test/sd_ses-4.h5"
 
 # Load model
 model = load_model_for_inference(checkpoint_path, model_config_path)
@@ -76,10 +76,10 @@ with torch.no_grad():
         chunk = torch.tensor(chunk, dtype=torch.float32).unsqueeze(0).unsqueeze(0)  # Shape: (1, 1, chunk_size)
         
         # Run the model
-        prediction, probabilities = model(chunk)  # `probabilities` shape: [1, 3, 150]
+        prediction= model(chunk)  # `probabilities` shape: [1, 3, 150]
 
         # compute the softmax from predictions
-        probabilities = F.softmax(prediction / 0.001, dim=1)
+        probabilities = F.softmax(prediction / 0.1, dim=1)
 
 
         

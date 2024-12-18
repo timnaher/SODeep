@@ -7,7 +7,7 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau, StepLR
 from layers import ResidualBlock, CausalResidualBlock, UpsamplingDecoder, PositionalEncoding, SequentialLSTM
 from losses import CEtransitionLoss
 from hydra.utils import instantiate
-from sklearn.metrics import precision_score, recall_score, f1_score
+from torchmetrics import Accuracy, Precision, Recall
 
 
 
@@ -93,10 +93,7 @@ class SOD_v1(pl.LightningModule):
         class_logits = class_logits.permute(0, 2, 1)
         upsampled_logits = self.upsampler(class_logits)
 
-        # Compute softmax probabilities
-        probabilities = F.softmax(upsampled_logits, dim=1)  # (batch, num_classes, input_length)
-
-        return upsampled_logits, probabilities  # logits and probabilities
+        return upsampled_logits # logits and probabilities
     
     def compute_loss(self, logits, labels):
         return self.loss_fn(
@@ -106,13 +103,10 @@ class SOD_v1(pl.LightningModule):
     def _common_step(self, batch, stage):
         data, labels = batch
         labels = labels.squeeze(-1)  # (batch, time)
-        logits, probabilities = self(data)
+        logits = self(data)
 
-        # Threshold-based prediction logic
-        preds = torch.zeros_like(labels)  # Default to class 0
-        max_probs, max_classes = probabilities.max(dim=1)
-        threshold_mask = max_probs >= 0.8
-        preds[threshold_mask] = max_classes[threshold_mask]
+        # Prediction logic moved to a separate method
+        preds = self._pred_from_logits(logits)
 
         loss = self.compute_loss(logits, labels)
 
@@ -124,6 +118,36 @@ class SOD_v1(pl.LightningModule):
         self.log(f"{stage}_acc", acc, on_step=True, on_epoch=True, prog_bar=True)
 
         return loss
+
+    def _get_left_context(self) -> int:
+        """
+        Compute the receptive field (left context) based on CausalResidualBlocks.
+
+        Each block contributes:
+            left_context = (kernel_size - 1) * dilation
+        """
+        left, stride = 0, 1
+
+        # Contribution from residual blocks
+        for resblock in self.residual_blocks:
+            kernel_size = resblock.kernel_size  # Fixed at 3 in your implementation
+            dilation = resblock.conv1.dilation[0]  # Access dilation directly
+            left += (kernel_size - 1) * dilation * stride
+            stride *= 1  # Stride remains fixed as 1 in this model
+
+        return left
+
+    def _pred_from_logits(self, logits):
+        """
+        Converts probabilities to threshold-based predictions.
+        """
+        probabilities = F.softmax(logits, dim=1)
+        preds = torch.zeros_like(probabilities[:, 0], dtype=torch.long)  # Default to class 0
+        max_probs, max_classes = probabilities.max(dim=1)
+        threshold_mask = max_probs >= 0.8
+        preds[threshold_mask] = max_classes[threshold_mask]
+        return preds
+
 
     def training_step(self, batch, batch_idx):
         return self._common_step(batch, "train")
@@ -146,8 +170,6 @@ class SOD_v1(pl.LightningModule):
         }
 
         return [optimizer], [scheduler]
-
-
 
 #%%
 class SOD_lstm1(pl.LightningModule):

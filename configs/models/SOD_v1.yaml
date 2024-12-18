@@ -4,14 +4,15 @@ name: SOD_v1
 model:
   _target_: model.SOD_v1
   input_length: 150
-  transition_penalty_weight: 0.3
-  smoothness_weight: 0.5
+  transition_penalty_weight: 0.2
+  smoothness_weight: 0.1
+  label_smoothing: 0.05
   num_classes: 3
   learning_rate: 0.01
-  nhead: 4
+  nhead: 2
   num_attention_layers: 2
   dim_feedforward: 128
-  dropout: 0.15
+  dropout: 0.1
   lr_decay_factor: 0.75
   lr_decay_nstep: 5
 
@@ -20,6 +21,7 @@ model:
     - in_filters: 1
       out_filters: 16
       dilation: 1
+      is_resid: False
     - in_filters: 16
       out_filters: 16
       dilation: 2
@@ -44,7 +46,7 @@ datamodule:
   train_dir: "data/processed/train"
   val_dir: "data/processed/val"
   test_dir: "data/processed/test"
-  stride: 10
+  stride: 50
   keep_ratio: 1.5
   apply_savgol: 0
   deriv: 0
