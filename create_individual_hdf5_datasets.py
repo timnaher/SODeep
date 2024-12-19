@@ -6,60 +6,64 @@ import os
 if __name__ == "__main__":
 
     # Define directories
-    input_dir = '/Volumes/T7/SchemAcS/labeled_windows/'
+    input_dir = '/Volumes/T7/SchemAcS/labeled_windows_V1/'
     output_dir = 'data/processed'
     os.makedirs(output_dir, exist_ok=True)
 
     # Get all .mat files in the input directory
     matfiles = [os.path.join(input_dir, f) for f in os.listdir(input_dir) if f.endswith('.mat')]
-
+    # delete files that contain '/.' in the
+    matfiles = [f for f in matfiles if '/.' not in f]
     # Process each .mat file
     for i, matfile in enumerate(matfiles):
-        # Load the .mat file
-        with h5py.File(matfile, 'r') as src_file:
-            # Extract data
-            eeg = np.array(src_file['eeg_filt_causal'][:])  # Convert to NumPy array
-            time = np.array(src_file['time'][:])
-            indices = np.arange(eeg.shape[0])
-            targets = np.array(src_file['targets'][:])
+        try:
+            # Load the .mat file
+            with h5py.File(matfile, 'r') as src_file:
+                # Extract data
+                eeg = np.array(src_file['eeg_filt_causal'][:])  # Convert to NumPy array
+                time = np.array(src_file['time'][:])
+                indices = np.arange(eeg.shape[0])
+                targets = np.array(src_file['targets'][:])
 
-        # Define the output filename
-        session_name = f"sd_ses-{i + 1}.h5"
-        output_path = os.path.join(output_dir, session_name)
+            # Define the output filename
+            session_name = f"sd_ses-{i + 1}.h5"
+            output_path = os.path.join(output_dir, session_name)
 
-        # Save to HDF5 with the desired structure
-        with h5py.File(output_path, 'w') as hdf_file:
-            # Create the datasets
-            hdf_file.create_dataset(
-                'eeg',
-                data=eeg,
-                compression='gzip',
-                chunks=True,  # Enable chunking for efficient access
-                maxshape=(None,1)  # Allow dynamic resizing in the first dimension
-            )
-            hdf_file.create_dataset(
-                'time',
-                data=time,
-                compression='gzip',
-                chunks=True,  # Chunking for efficient access
-                maxshape=(None)  # Allow dynamic resizing
-            )
-            hdf_file.create_dataset(
-                'targets',
-                data=targets,
-                compression='gzip',
-                chunks=True,  # Chunking for efficient access
-                maxshape=(None,1)  # Allow dynamic resizing
-            )
-            hdf_file.create_dataset(
-                'indices',
-                data=indices,
-                compression='gzip',
-                chunks=True,  # Chunking for efficient access
-                maxshape=(None,)  # Allow dynamic resizing
-            )
+            # Save to HDF5 with the desired structure
+            with h5py.File(output_path, 'w') as hdf_file:
+                # Create the datasets
+                hdf_file.create_dataset(
+                    'eeg',
+                    data=eeg,
+                    compression='gzip',
+                    chunks=True,  # Enable chunking for efficient access
+                    maxshape=(None,1)  # Allow dynamic resizing in the first dimension
+                )
+                hdf_file.create_dataset(
+                    'time',
+                    data=time,
+                    compression='gzip',
+                    chunks=True,  # Chunking for efficient access
+                    maxshape=(None)  # Allow dynamic resizing
+                )
+                hdf_file.create_dataset(
+                    'targets',
+                    data=targets,
+                    compression='gzip',
+                    chunks=True,  # Chunking for efficient access
+                    maxshape=(None,1)  # Allow dynamic resizing
+                )
+                hdf_file.create_dataset(
+                    'indices',
+                    data=indices,
+                    compression='gzip',
+                    chunks=True,  # Chunking for efficient access
+                    maxshape=(None,)  # Allow dynamic resizing
+                )
 
-        print(f"Processed {matfile} -> {output_path}")
+            print(f"Processed {matfile} -> {output_path}")
+        except Exception as e:
+            print(f"Error processing {matfile}: {e}")
 
 
     # if debug

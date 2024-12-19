@@ -58,6 +58,7 @@ class WindowedEEGDataset(Dataset):
             self.num_timepoints = hdf["eeg"].shape[0]
             self.num_channels = hdf["eeg"].shape[1]
             self.targets = np.array(hdf["targets"][:])  # Use "targets" for labels
+            self.eeg = np.array(hdf["eeg"])  # Keep a reference to the dataset
 
         # Precompute windows with balancing
         self.windows = self._compute_windows(keep_ratio=self.keep_ratio)
@@ -88,6 +89,10 @@ class WindowedEEGDataset(Dataset):
                 if not np.all(np.diff(time[start:end]) == 1):  # Detect non-consecutive values
                     continue  # Skip this window
 
+                # check if movement epoch, eeg amplitude os over 500uV
+                if np.max(np.abs(self.eeg[start:end])) > 400:
+                    continue
+                
                 # Add valid window
                 windows.append((start, end))
 
@@ -149,10 +154,6 @@ class WindowedEEGDataset(Dataset):
             data = self.transform(data)
 
         return data, label
-
-
-
-
 
 
 ##########################
@@ -259,6 +260,10 @@ class WindowedEEGDataModule(pl.LightningDataModule):
                 for hdf5_path in self.test_sessions
             ]
         )
+        # Print dataset sizes
+        print(f"Train Dataset: {len(self.train_dataset)} windows")
+        print(f"Val Dataset: {len(self.val_dataset)} windows")
+        print(f"Test Dataset: {len(self.test_dataset)} windows")
 
     def train_dataloader(self) -> DataLoader:
         return DataLoader(

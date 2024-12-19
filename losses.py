@@ -4,14 +4,14 @@ import torch.nn as nn
 class CEtransitionLoss(nn.Module):
     def __init__(self,
     smoothness_weight=0.1,
-    transition_penalty_weight=0.2,
+    transition_penalty_weight=0.0,
     label_smoothing=0.05):
         super(CEtransitionLoss, self).__init__()
         self.ce_loss = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
         self.smoothness_weight = smoothness_weight
         self.transition_penalty_weight = transition_penalty_weight
 
-    def forward(self, logits, labels):
+    def forward(self, logits, labels, **kwargs):
         ce = self.ce_loss(logits, labels)
 
         # Smoothness penalty
@@ -19,10 +19,10 @@ class CEtransitionLoss(nn.Module):
         smoothness_penalty = self.smoothness_weight * diff
 
         # Transition penalty
-        preds = logits.argmax(dim=1)  # Get predictions: (batch, time)
+        #preds = logits.argmax(dim=1)  # Get predictions: (batch, time)
         invalid_transitions = {(0, 2): 1, (2, 1): 1, (1, 0): 1}
         penalties = []
-
+        preds = kwargs.get('preds', None)
         for batch_idx in range(preds.shape[0]):
             for t in range(preds.shape[1] - 1):
                 current, next_ = preds[batch_idx, t], preds[batch_idx, t + 1]

@@ -5,21 +5,19 @@ import torch
 import torch.nn as nn
 import pytorch_lightning as pl
 from torch.optim.lr_scheduler import StepLR
+from omegaconf import DictConfig
 from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 from pytorch_lightning.profilers import PyTorchProfiler
 from utils.loggers import LogLearningRateCallback
 
 import hydra
-from hydra.utils import instantiate
 from omegaconf import OmegaConf
 
-
-
-@hydra.main(config_path="configs/models", config_name="SOD_v1", version_base=None)
-def main(cfg):
-    model = instantiate(cfg.model)
-    datamodule = instantiate(cfg.datamodule)
+@hydra.main(config_path="configs/models", config_name="SOD_trans-lin", version_base=None)
+def main(cfg: DictConfig):
+    model = hydra.utils.instantiate(cfg.model)
+    datamodule = hydra.utils.instantiate(cfg.datamodule)
 
     # Logger: Pass the entire Hydra configuration for hyperparameter tracking
     logger = TensorBoardLogger("tb_logs", name=cfg.name)
@@ -39,6 +37,8 @@ def main(cfg):
 
     # Trainer Configuration
     trainer = pl.Trainer(
+        gradient_clip_algorithm="norm",
+        gradient_clip_val=1,
         min_epochs=30,
         max_epochs=cfg.trainer.max_epochs,
         logger=logger,

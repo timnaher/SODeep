@@ -1,3 +1,4 @@
+#%%
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -8,9 +9,145 @@ from layers import ResidualBlock, CausalResidualBlock, UpsamplingDecoder, Positi
 from losses import CEtransitionLoss
 from hydra.utils import instantiate
 from torchmetrics import Accuracy, Precision, Recall
+from networks import TransformerEncoderModel, LinearDecoder, LSTMDecoder
+
+# Base Model with Encoder and Decoder
+class BaseModel(pl.LightningModule):
+    def __init__(self, encoder, decoder, loss_fn, learning_rate, weight_decay, return_valid, lr_scheduler_config=None):
+        super(BaseModel, self).__init__()
+        self.encoder = encoder
+        self.decoder = decoder
+        self.loss_fn = loss_fn
+        self.learning_rate = learning_rate
+        self.weight_decay = weight_decay
+        self.return_valid = return_valid
+        self.lr_scheduler_config = lr_scheduler_config
+        self.left_context = self._get_left_context()
+        # mark if loss should be computed on whole or cropped sequence
+        self.loss_on_cropped = True if self.encoder.return_valid or self.return_valid else False
+        print(f"Left context: {self.left_context}")
 
 
 
+    def forward(self, x):
+        encoded = self.encoder(x, self.left_context)
+
+        if self.return_valid:
+            decoded = self.decoder(encoded, self.left_context)
+        else:
+            decoded = self.decoder(encoded)
+
+        return decoded
+
+    def compute_loss(self, logits, labels, **kwargs):
+        #labels = labels.squeeze(-1)  # (batch, time)
+
+        return self.loss_fn(logits, labels, **kwargs)
+
+    def _common_step(self, batch, stage):
+        data, labels = batch
+        labels = labels.squeeze(-1)  # (batch, time)
+
+        # check if loss should be computed on valid labels
+        if self.loss_on_cropped:
+            labels = labels[:, self.left_context:]
+
+        logits = self(data)
+
+        # Prediction logic moved to a separate method
+        preds = self._pred_from_logits(logits)
+
+        loss = self.compute_loss(logits, labels, preds=preds)
+
+        # Calculate accuracy
+        acc = (preds == labels).float().mean()
+
+        # Log overall metrics
+        self.log(f"{stage}_loss", loss, on_step=True, on_epoch=True, prog_bar=True)
+        self.log(f"{stage}_acc", acc, on_step=True, on_epoch=True, prog_bar=True)
+
+        return loss
+
+    def training_step(self, batch, batch_idx):
+        return self._common_step(batch, "train")
+
+    def validation_step(self, batch, batch_idx):
+        return self._common_step(batch, "val")
+
+    def test_step(self, batch, batch_idx):
+        return self._common_step(batch, "test")
+
+    def _pred_from_logits(self, logits):
+        """
+        Converts probabilities to threshold-based predictions.
+        """
+        probabilities = F.softmax(logits, dim=1)
+        preds = torch.zeros_like(probabilities[:, 0], dtype=torch.long)  # Default to class 0
+        max_probs, max_classes = probabilities.max(dim=1)
+        threshold_mask = max_probs >= 0.8
+        preds[threshold_mask] = max_classes[threshold_mask]
+        return preds
+    
+    def _get_left_context(self) -> int:
+        """
+        Compute the total left context (receptive field) of the model.
+
+        Each CausalResidualBlock contributes:
+            left_context = (kernel_size - 1) * dilation
+
+        Returns:
+            int: Total left context (in time steps).
+        """
+        left_context = 0
+
+        # Assume `self.encoder` has a list of residual blocks
+        if hasattr(self.encoder, 'residual_blocks'):
+            for block in self.encoder.residual_blocks:
+                if isinstance(block, CausalResidualBlock):
+                    kernel_size = block.kernel_size  # Typically fixed, e.g., 3
+                    dilation = block.conv1.dilation[0]  # Access dilation directly
+                    left_context += (kernel_size - 1) * dilation
+
+        return left_context
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.AdamW(
+            self.parameters(), lr=self.learning_rate,
+            weight_decay=self.weight_decay
+            )
+        if self.lr_scheduler_config:
+            scheduler = {
+                'scheduler': torch.optim.lr_scheduler.StepLR(
+                    optimizer,
+                    step_size=self.lr_scheduler_config['step_size'],
+                    gamma=self.lr_scheduler_config['gamma']
+                ),
+                'interval': 'epoch'
+            }
+            return [optimizer], [scheduler]
+        return [optimizer]
+
+
+
+# Test the models
+if __name__ == "__main__":
+    # Encoder and decoder configuration
+    resblock_config = [
+        {'in_filters': 1, 'out_filters': 32, 'dilation': 2,},
+        {'in_filters': 32, 'out_filters': 64, 'dilation': 3},
+    ]
+    encoder = TransformerEncoderModel(resblock_config, nhead=4, num_attention_layers=2, dim_feedforward=256, dropout=0.1)
+    decoder = LSTMDecoder(input_dim=64, hidden_size=128, num_layers=2, num_classes=3)
+    loss_fn = CEtransitionLoss(smoothness_weight=0.1, transition_penalty_weight=0.1)
+    model = BaseModel(encoder, decoder, loss_fn, learning_rate=0.001, lr_scheduler_config={'step_size': 4, 'gamma': 0.5},return_valid=False)
+    # run some random data
+    data = torch.randn(2, 1, 150)
+    y = model(data)
+    print(y.shape)
+
+
+#%%
+'''
 class SOD_v1(pl.LightningModule):
     def __init__(self, input_length, num_classes,
                  learning_rate, nhead, num_attention_layers,
@@ -278,3 +415,4 @@ if __name__ == "__main__":
 
 
 #%%
+'''

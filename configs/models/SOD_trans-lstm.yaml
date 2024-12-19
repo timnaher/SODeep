@@ -1,0 +1,67 @@
+# Model parameters
+name: SOD_trans-lstm
+
+model:
+  _target_: model.BaseModel
+  encoder:
+    _target_: networks.TransformerEncoderModel
+    resblock_config:
+      - in_filters: 1
+        out_filters: 16
+        dilation: 1
+        is_resid: True
+      - in_filters: 16
+        out_filters: 16
+        dilation: 2
+      - in_filters: 16
+        out_filters: 32
+        dilation: 4
+      - in_filters: 32
+        out_filters: 32
+        dilation: 8
+      - in_filters: 32
+        out_filters: 32
+        dilation: 16
+
+    nhead: 4
+    num_attention_layers: 2
+    dim_feedforward: 1
+    dropout: 0.1
+  decoder:
+    _target_: networks.LSTMDecoder
+    input_dim: 32  # Must match the output of the encoder
+    hidden_size: 64
+    num_layers: 2
+    dropout: 0.1
+    num_classes: 3
+  loss_fn:
+    _target_: losses.CEtransitionLoss
+    smoothness_weight: 0.3
+    transition_penalty_weight: 0.0
+    label_smoothing: 0.05
+
+  learning_rate: 0.01
+  weight_decay: 1e-5
+  return_valid: True
+  lr_scheduler_config:
+    step_size: 5
+    gamma: 0.75
+
+datamodule:
+  _target_: dataset.WindowedEEGDataModule
+  window_length: 150
+  batch_size: 256
+  num_workers: 6
+  train_dir: "data/processed/train"
+  val_dir: "data/processed/val"
+  test_dir: "data/processed/test"
+  stride: 50
+  keep_ratio: 1.5
+  apply_savgol: 0
+  deriv: 0
+  transforms:
+      - _target_: utils.transforms.population_zscore_transform
+
+trainer:
+  max_epochs: 100
+  log_every_n_steps: 1
