@@ -24,7 +24,7 @@ model:
         dilation: 16
 
     nhead: 4
-    num_attention_layers: 2
+    num_attention_layers: 4
     dim_feedforward: 128
     dropout: 0.1
     return_valid: True
@@ -42,14 +42,14 @@ model:
   weight_decay: 1e-5
   return_valid: False
   lr_scheduler_config:
-    step_size: 5
+    step_size: 10
     gamma: 0.75
 
 datamodule:
   _target_: dataset.WindowedEEGDataModule
   window_length: 150
   batch_size: 128
-  num_workers: 6
+  num_workers: 7
   train_dir: "data/processed/train"
   val_dir: "data/processed/val"
   test_dir: "data/processed/test"

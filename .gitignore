@@ -13,9 +13,9 @@ __pycache__/
 *.csv
 
 # pytorch specifics
-*.ckpt
-events*
-hparams*
+#*.ckpt
+#events*
+#hparams*
 
 # hydra
 outputs/
