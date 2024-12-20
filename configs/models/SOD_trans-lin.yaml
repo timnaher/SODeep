@@ -24,14 +24,14 @@ model:
         dilation: 16
 
     nhead: 4
-    num_attention_layers: 4
+    num_attention_layers: 2
     dim_feedforward: 128
     dropout: 0.1
     return_valid: True
   decoder:
     _target_: networks.LinearDecoder
     input_dim: 128  # Must match the output of the encoder (dim_feedforward)
-    intermediate_dim: 256
+    intermediate_dim: 128
     num_classes: 3
   loss_fn:
     _target_: losses.CEtransitionLoss
@@ -48,12 +48,12 @@ model:
 datamodule:
   _target_: dataset.WindowedEEGDataModule
   window_length: 150
-  batch_size: 128
-  num_workers: 7
+  batch_size: 256
+  num_workers: 6
   train_dir: "data/processed/train"
   val_dir: "data/processed/val"
   test_dir: "data/processed/test"
-  stride: 100
+  stride: 50
   keep_ratio: 1.5
   apply_savgol: 0
   deriv: 0
