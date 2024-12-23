@@ -1,0 +1,8 @@
+defaults:
+  - model: base
+  - datamodule: base
+  - trainer: base
+  - loss: base
+  - _self_ 
+
+name: SOD_trans-lin
