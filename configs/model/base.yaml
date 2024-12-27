@@ -19,7 +19,7 @@ encoder:
       out_filters: 32
       dilation: 16
   nhead: 8
-  num_attention_layers: 2
+  num_attention_layers: 4
   dim_feedforward: 128
   dropout: 0.1
   return_valid: true

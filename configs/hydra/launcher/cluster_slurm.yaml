@@ -1,13 +1,12 @@
 _target_: hydra_plugins.hydra_submitit_launcher.submitit_launcher.SlurmLauncher
 
 submitit_folder: ./.submitit/${now:%Y-%m-%d_%H-%M-%S}
-
 partition: GPUlong
-#cpus_per_task: 8
-#mem_per_cpu: 4000
 job_name: "hydra_sweep"
-#max_parallel_jobs: 4
-#time: 01:00:00
+additional_parameters:
+  gres: "gpu:rtxa6000:1"
+
+time: "2-00:00:00"
 
 setup:
   - module load conda

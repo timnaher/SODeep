@@ -3,7 +3,7 @@ defaults:
   - datamodule: base
   - trainer: base
   - loss: base
-  #- override hydra/launcher: cluster_slurm
+  - override hydra/launcher: cluster_slurm
   - _self_
 
 hydra:
