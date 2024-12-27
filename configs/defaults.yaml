@@ -3,6 +3,13 @@ defaults:
   - datamodule: base
   - trainer: base
   - loss: base
-  - _self_ 
+  #- override hydra/launcher: cluster_slurm
+  - _self_
 
-name: SOD_trans-lin
+hydra:
+  run:
+    dir: ./logs/runs/${hydra.job.override_dirname}
+  sweep:
+    dir: ./logs/sweeps/${name}_${now:%Y-%m-%d_%H-%M-%S}
+
+name: SOD_trans-lin_comp-attention_lay

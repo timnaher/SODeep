@@ -18,7 +18,7 @@ torch.set_float32_matmul_precision('medium')
 import hydra
 from omegaconf import OmegaConf
 
-@hydra.main(config_path="configs/models", config_name="SOD_trans-lin", version_base=None)
+@hydra.main(config_path="configs", config_name="defaults",  version_base="1.2")
 def main(cfg: DictConfig):
 
     model = hydra.utils.instantiate(cfg.model)
@@ -43,8 +43,8 @@ def main(cfg: DictConfig):
     # Trainer Configuration
     trainer = pl.Trainer(
         gradient_clip_algorithm="norm",
-        gradient_clip_val=1,
-        min_epochs=50,
+        gradient_clip_val=2,
+        min_epochs=cfg.trainer.min_epochs,
         max_epochs=cfg.trainer.max_epochs,
         logger=logger,
         callbacks=[
@@ -52,7 +52,7 @@ def main(cfg: DictConfig):
             early_stopping_callback,
             LogLearningRateCallback()],
         log_every_n_steps=cfg.trainer.log_every_n_steps,
-        accelerator="cpu"
+        accelerator="gpu"
     )
 
     trainer.fit(model, datamodule)

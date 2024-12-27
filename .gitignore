@@ -19,7 +19,7 @@ __pycache__/
 
 # hydra
 outputs/
-
+.*
 
 # C extensions
 *.so
