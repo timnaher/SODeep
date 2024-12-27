@@ -30,7 +30,7 @@ def load_model_for_inference(checkpoint_path, model_config_path):
     return model
 
 # File paths
-basepath = "/Users/timnaher/Documents/PhD/Projects/SODeep/tb_logs/SOD_trans-lin/version_7"
+basepath = "/Users/timnaher/Documents/PhD/Projects/SODeep/tb_logs/SOD_trans-lin/version_0"
 checkpoint_path = basepath + "/checkpoints/" + [f for f in os.listdir(basepath + "/checkpoints") if f.endswith(".ckpt")][0]
 model_config_path = basepath + "/hparams.yaml"
 print(checkpoint_path)
@@ -59,12 +59,9 @@ chunks = []
 probas = []
 #labels = []
 
-
-
-
 # Loop through data in chunks
-t1 = 1350000
-t2 = 1450000
+t1 = 350000
+t2 = 450000
 # Define the causal convolution's valid range in output
 valid_start = 62
 valid_end = 150
