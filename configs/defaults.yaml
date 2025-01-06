@@ -8,8 +8,10 @@ defaults:
 
 hydra:
   run:
-    dir: ./logs/runs/${hydra.job.override_dirname}
+    dir: ${log_dir}/runs/${hydra.job.override_dirname}  # Save Hydra run-specific outputs in log_dir
   sweep:
-    dir: ./logs/sweeps/${name}_${now:%Y-%m-%d_%H-%M-%S}
+    dir: ${log_dir}/sweeps/${name}_${now:%Y-%m-%d_%H-%M-%S}
 
-name: SOD_trans-lin_comp-attention_lay
+name: SOD_trans-lin_comp-attention_lay_long
+
+log_dir: /cs/home/naehert/projects/SODeep/logs/${now:%Y-%m-%d_%H-%M-%S}  # Central directory

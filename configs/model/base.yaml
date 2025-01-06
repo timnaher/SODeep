@@ -31,11 +31,11 @@ decoder:
 loss_fn:
   _target_: losses.CEtransitionLoss
   smoothness_weight: 0.2
-  transition_penalty_weight: 0
+  transition_penalty_weight: 0.2
   label_smoothing: 0.05
 learning_rate: 0.001
-weight_decay: 1.0e-05
+weight_decay: 1.0e-06
 return_valid: false
 lr_scheduler_config:
-  step_size: 5
-  gamma: 0.75
+  step_size: 10
+  gamma: 0.5

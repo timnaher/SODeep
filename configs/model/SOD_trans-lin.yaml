@@ -39,8 +39,12 @@ model:
   weight_decay: 1.0e-05
   return_valid: false
   lr_scheduler_config:
-    step_size: 10
-    gamma: 0.75
+    factor: 0.75
+    patience: 5
+    mode: min
+    min_lr: 1.0e-06
+    verbose: true
+    
 datamodule:
   _target_: dataset.WindowedEEGDataModule
   window_length: 150

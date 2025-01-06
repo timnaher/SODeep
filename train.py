@@ -1,46 +1,42 @@
-# Standard Library Imports
-import math
-
+import os
 import torch
-import torch.nn as nn
 import pytorch_lightning as pl
-from torch.optim.lr_scheduler import StepLR
-from omegaconf import DictConfig
 from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
-from pytorch_lightning.profilers import PyTorchProfiler
 from utils.loggers import LogLearningRateCallback
 
-# Set Tensor Core precision to 'medium' for better performance
-torch.set_float32_matmul_precision('medium')
-
-
 import hydra
-from omegaconf import OmegaConf
+from omegaconf import DictConfig
 
-@hydra.main(config_path="configs", config_name="defaults",  version_base="1.2")
+@hydra.main(config_path="configs", config_name="defaults", version_base="1.2")
 def main(cfg: DictConfig):
+    # Ensure log directory exists
+    os.makedirs(cfg.log_dir, exist_ok=True)
 
-    model = hydra.utils.instantiate(cfg.model)
-    datamodule = hydra.utils.instantiate(cfg.datamodule)
-
-    # Logger: Pass the entire Hydra configuration for hyperparameter tracking
-    logger = TensorBoardLogger("tb_logs", name=cfg.name)
+    # TensorBoard Logger
+    logger = TensorBoardLogger(
+        save_dir=cfg.log_dir,  # Central directory
+        name=None,             # Avoid subfolders like 'default'
+        version=None           # Avoid nested folders
+    )
     logger.log_hyperparams(cfg)
+    version_dir = logger.log_dir
 
-    # Checkpoints and Early Stopping
+    # Checkpoints
     checkpoint_callback = ModelCheckpoint(
         monitor="val_loss",
-        dirpath=f"{logger.log_dir}/checkpoints",  #  logger's directory
+        dirpath=f"{version_dir}/checkpoints",  # Save checkpoints in version_x/checkpoints
         filename="{epoch:02d}-{val_loss:.2f}",  
-        save_top_k=1,
+        save_top_k=5,
         mode="min",
     )
+
+    # Early Stopping
     early_stopping_callback = EarlyStopping(
-        monitor="val_loss", patience=10, mode="min"
+        monitor="val_loss", patience=20, mode="min"
     )
 
-    # Trainer Configuration
+    # Trainer
     trainer = pl.Trainer(
         gradient_clip_algorithm="norm",
         gradient_clip_val=2,
@@ -52,10 +48,11 @@ def main(cfg: DictConfig):
             early_stopping_callback,
             LogLearningRateCallback()],
         log_every_n_steps=cfg.trainer.log_every_n_steps,
-        accelerator="gpu"
+        accelerator="cpu"
     )
 
-    trainer.fit(model, datamodule)
+    # Train the model
+    trainer.fit(hydra.utils.instantiate(cfg.model), hydra.utils.instantiate(cfg.datamodule))
 
 if __name__ == "__main__":
     main()

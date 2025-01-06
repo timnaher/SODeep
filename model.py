@@ -13,8 +13,9 @@ from networks import TransformerEncoderModel, LinearDecoder, LSTMDecoder
 
 # Base Model with Encoder and Decoder
 class BaseModel(pl.LightningModule):
-    def __init__(self, encoder, decoder, loss_fn, learning_rate, weight_decay, return_valid, lr_scheduler_config=None):
-        super(BaseModel, self).__init__()
+    def __init__(self, encoder, decoder, loss_fn, learning_rate, weight_decay,
+                 return_valid, lr_scheduler_config=None):
+        super().__init__()
         self.encoder = encoder
         self.decoder = decoder
         self.loss_fn = loss_fn
@@ -23,46 +24,35 @@ class BaseModel(pl.LightningModule):
         self.return_valid = return_valid
         self.lr_scheduler_config = lr_scheduler_config
         self.left_context = self._get_left_context()
-        # mark if loss should be computed on whole or cropped sequence
-        self.loss_on_cropped = True if self.encoder.return_valid or self.return_valid else False
+
+        # if your encoder has a "return_valid" attribute
+        self.loss_on_cropped = True if getattr(self.encoder, 'return_valid', False) or self.return_valid else False
         print(f"Left context: {self.left_context}")
-
-
 
     def forward(self, x):
         encoded = self.encoder(x, self.left_context)
-
         if self.return_valid:
             decoded = self.decoder(encoded, self.left_context)
         else:
             decoded = self.decoder(encoded)
-
         return decoded
 
     def compute_loss(self, logits, labels, **kwargs):
-        #labels = labels.squeeze(-1)  # (batch, time)
-
         return self.loss_fn(logits, labels, **kwargs)
 
     def _common_step(self, batch, stage):
         data, labels = batch
-        labels = labels.squeeze(-1)  # (batch, time)
+        labels = labels.squeeze(-1)
 
-        # check if loss should be computed on valid labels
         if self.loss_on_cropped:
             labels = labels[:, self.left_context:]
 
         logits = self(data)
-
-        # Prediction logic moved to a separate method
         preds = self._pred_from_logits(logits)
-
         loss = self.compute_loss(logits, labels, preds=preds)
 
-        # Calculate accuracy
         acc = (preds == labels).float().mean()
 
-        # Log overall metrics
         self.log(f"{stage}_loss", loss, on_step=True, on_epoch=True, prog_bar=True)
         self.log(f"{stage}_acc", acc, on_step=True, on_epoch=True, prog_bar=True)
 
@@ -78,53 +68,49 @@ class BaseModel(pl.LightningModule):
         return self._common_step(batch, "test")
 
     def _pred_from_logits(self, logits):
-        """
-        Converts probabilities to threshold-based predictions.
-        """
         probabilities = F.softmax(logits, dim=1)
-        preds = torch.zeros_like(probabilities[:, 0], dtype=torch.long)  # Default to class 0
+        preds = torch.zeros_like(probabilities[:, 0], dtype=torch.long)
         max_probs, max_classes = probabilities.max(dim=1)
         threshold_mask = max_probs >= 0.8
         preds[threshold_mask] = max_classes[threshold_mask]
         return preds
-    
+
     def _get_left_context(self) -> int:
-        """
-        Compute the total left context (receptive field) of the model.
-
-        Each CausalResidualBlock contributes:
-            left_context = (kernel_size - 1) * dilation
-
-        Returns:
-            int: Total left context (in time steps).
-        """
         left_context = 0
-
-        # Assume `self.encoder` has a list of residual blocks
         if hasattr(self.encoder, 'residual_blocks'):
             for block in self.encoder.residual_blocks:
-                if isinstance(block, CausalResidualBlock):
-                    kernel_size = block.kernel_size  # Typically fixed, e.g., 3
-                    dilation = block.conv1.dilation[0]  # Access dilation directly
-                    left_context += (kernel_size - 1) * dilation
-
+                # Adjust based on your specific block definition
+                kernel_size = block.kernel_size
+                dilation = block.conv1.dilation[0]
+                left_context += (kernel_size - 1) * dilation
         return left_context
 
     def configure_optimizers(self):
+        # 1. Create an optimizer
         optimizer = torch.optim.AdamW(
-            self.parameters(), lr=self.learning_rate,
+            self.parameters(),
+            lr=self.learning_rate,
             weight_decay=self.weight_decay
-            )
+        )
+
+        # 2. If config is provided, create a ReduceLROnPlateau
         if self.lr_scheduler_config:
             scheduler = {
-                'scheduler': torch.optim.lr_scheduler.StepLR(
+                'scheduler': ReduceLROnPlateau(
                     optimizer,
-                    step_size=self.lr_scheduler_config['step_size'],
-                    gamma=self.lr_scheduler_config['gamma']
+                    mode=self.lr_scheduler_config.get('mode', 'min'),
+                    factor=self.lr_scheduler_config.get('factor', 0.1),
+                    patience=self.lr_scheduler_config.get('patience', 5),
+                    verbose=self.lr_scheduler_config.get('verbose', False),
+                    min_lr=self.lr_scheduler_config.get('min_lr', 1e-6),
                 ),
-                'interval': 'epoch'
+                'monitor': 'val_loss',  # Must match the metric name you log
+                'interval': 'epoch',
+                'frequency': 1
             }
             return [optimizer], [scheduler]
+
+        # 3. If no lr_scheduler_config, return just the optimizer
         return [optimizer]
 
 
