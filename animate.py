@@ -96,7 +96,7 @@ with torch.no_grad():
         inference_times.append(inference_time)
 
         # Compute the softmax
-        probabilities = F.softmax(prediction / 0.1, dim=1)
+        probabilities = F.softmax(prediction / 0.5, dim=1)
 
         # Extract valid range of probabilities and smooth them
         probabilities_np = probabilities.squeeze(0).detach().numpy()  # Shape: [3, valid_length]
@@ -218,7 +218,7 @@ def update(frame):
     axs[2].set_xlabel("Time")
 
 # Create the animation
-ani = FuncAnimation(fig, update, frames=range(0, len(time), 10), interval=animation_interval, blit=False)
+ani = FuncAnimation(fig, update, frames=range(0, len(time), 5), interval=animation_interval, blit=False)
 
 # Show the animation
 plt.show()
